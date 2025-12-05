@@ -1,7 +1,8 @@
 #!/bin/bash
 
-Colors
-
+# =========================
+# COLORS
+# =========================
 GREEN="\033[1;32m"
 YELLOW="\033[1;33m"
 CYAN="\033[1;36m"
@@ -12,93 +13,129 @@ BOLD="\033[1m"
 GRAY="\033[1;30m"
 
 print_task() {
-echo -ne "${GRAY}•${RESET} $1..."
+  echo -ne "${GRAY}•${RESET} $1..."
 }
 
 print_done() {
-echo -e "\r${GREEN}✓${RESET} $1      "
+  echo -e "\r${GREEN}✓${RESET} $1      "
 }
 
 print_fail() {
-echo -e "\r${RED}✗${RESET} $1      "
-exit 1
+  echo -e "\r${RED}✗${RESET} $1      "
+  exit 1
 }
 
 run_silent() {
-local msg="$1"
-local cmd="$2"
+  local msg="$1"
+  local cmd="$2"
 
-print_task "$msg"
-bash -c "$cmd" &>/tmp/zivpn_install.log
-if [ $? -eq 0 ]; then
-print_done "$msg"
-else
-print_fail "$msg (Check /tmp/zivpn_install.log)"
-fi
+  print_task "$msg"
+  bash -c "$cmd" &>/tmp/zivpn_install.log
+  if [ $? -eq 0 ]; then
+    print_done "$msg"
+  else
+    print_fail "$msg (Check /tmp/zivpn_install.log)"
+  fi
 }
 
 clear
 echo -e "${BOLD}ZiVPN UDP Installer${RESET}"
-echo -e "${GRAY}Ris-Project Edition${RESET}" # Updated edition name
+echo -e "${GRAY}Ris-Project Edition${RESET}"
 echo ""
 
+# =========================
+# CEK OS
+# =========================
 if [[ "$(uname -s)" != "Linux" ]] || [[ "$(uname -m)" != "x86_64" ]]; then
-print_fail "System not supported (Linux AMD64 only)"
+  print_fail "System not supported (Linux AMD64 only)"
 fi
 
+# =========================
+# ✅ VALIDASI IP VPS VIA GITHUB
+# =========================
+MYIP=$(curl -s ifconfig.me)
+IP_LIST_URL="https://raw.githubusercontent.com/Ris-Project/zipvpn/main/ip-allow.txt"
+
+echo -e "${CYAN}Checking VPS IP Authorization...${RESET}"
+
+if curl -fsSL "$IP_LIST_URL" | grep -qw "$MYIP"; then
+  echo -e "${GREEN}✓ IP Authorized: $MYIP${RESET}"
+else
+  echo -e "${RED}✗ VPS IP NOT AUTHORIZED!${RESET}"
+  echo -e "${YELLOW}Your IP: $MYIP${RESET}"
+  echo -e "${YELLOW}Add this IP to ip-allow.txt in GitHub!${RESET}"
+  exit 1
+fi
+
+# =========================
+# CEK INSTALASI
+# =========================
 if [ -f /usr/local/bin/zivpn ]; then
-print_fail "ZiVPN already installed"
+  print_fail "ZiVPN already installed"
 fi
 
-run_silent "Updating system" "sudo apt-get update"
+run_silent "Updating system" "apt-get update -y"
 
 if ! command -v go &> /dev/null; then
-run_silent "Installing dependencies" "sudo apt-get install -y golang git"
+  run_silent "Installing dependencies" "apt-get install -y golang git wget curl ufw openssl"
 else
-print_done "Dependencies ready"
+  print_done "Dependencies ready"
 fi
 
+# =========================
+# DOMAIN
+# =========================
 echo ""
 echo -ne "${BOLD}Domain Configuration${RESET}\n"
 while true; do
-read -p "Enter Domain: " domain
-if [[ -n "$domain" ]]; then
-break
-fi
+  read -p "Enter Domain: " domain
+  [[ -n "$domain" ]] && break
 done
 echo ""
 
+# =========================
+# API KEY
+# =========================
 echo -ne "${BOLD}API Key Configuration${RESET}\n"
 generated_key=$(openssl rand -hex 16)
 echo -e "Generated Key: ${CYAN}$generated_key${RESET}"
 read -p "Enter API Key (Press Enter to use generated): " input_key
-if [[ -z "$input_key" ]]; then
-api_key="$generated_key"
-else
-api_key="$input_key"
-fi
+api_key="${input_key:-$generated_key}"
 echo -e "Using Key: ${GREEN}$api_key${RESET}"
 echo ""
 
 systemctl stop zivpn.service &>/dev/null
 
-Core binary download link is kept as the user only requested changing the AutoFTbot/ZiVPN repo links
-
-run_silent "Downloading Core" "wget -q https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-amd64 -O /usr/local/bin/zivpn && chmod +x /usr/local/bin/zivpn"
+# =========================
+# DOWNLOAD CORE (STABIL)
+# =========================
+run_silent "Downloading Core" \
+"wget -q https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-amd64 -O /usr/local/bin/zivpn && chmod +x /usr/local/bin/zivpn"
 
 mkdir -p /etc/zivpn
 echo "$domain" > /etc/zivpn/domain
 echo "$api_key" > /etc/zivpn/apikey
 
---- UPDATED REPO URL ---
+# =========================
+# CONFIG
+# =========================
+run_silent "Configuring" \
+"wget -q https://raw.githubusercontent.com/Ris-Project/zipvpn/main/config.json -O /etc/zivpn/config.json"
 
-run_silent "Configuring" "wget -q https://raw.githubusercontent.com/Ris-Project/zipvpn/main/config.json -O /etc/zivpn/config.json"
-
-run_silent "Generating SSL" "openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 -subj '/C=ID/ST=Jawa Barat/L=Bandung/O=Ris-Project/OU=IT Department/CN=$domain' -keyout /etc/zivpn/zivpn.key -out /etc/zivpn/zivpn.crt"
+# =========================
+# SSL
+# =========================
+run_silent "Generating SSL" \
+"openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
+-subj '/C=ID/ST=JawaBarat/L=Bandung/O=Ris-Project/OU=IT/CN=$domain' \
+-keyout /etc/zivpn/zivpn.key -out /etc/zivpn/zivpn.crt"
 
 sysctl -w net.core.rmem_max=16777216 &>/dev/null
 sysctl -w net.core.wmem_max=16777216 &>/dev/null
 
+# =========================
+# SYSTEMD CORE
+# =========================
 cat <<EOF > /etc/systemd/system/zivpn.service
 [Unit]
 Description=ZIVPN UDP VPN Server
@@ -110,29 +147,25 @@ User=root
 WorkingDirectory=/etc/zivpn
 ExecStart=/usr/local/bin/zivpn server -c /etc/zivpn/config.json
 Restart=always
-RestartSec=3
-Environment=ZIVPN_LOG_LEVEL=info
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-11. API Setup
-
+# =========================
+# ✅ API SETUP
+# =========================
 mkdir -p /etc/zivpn/api
 
---- UPDATED REPO URLS ---
-
-run_silent "Setting up API" "wget -q https://raw.githubusercontent.com/Ris-Project/zipvpn/main/zivpn-api.go -O /etc/zivpn/api/zivpn-api.go && wget -q https://raw.githubusercontent.com/Ris-Project/zipvpn/main/go.mod -O /etc/zivpn/api/go.mod"
+run_silent "Setting up API" \
+"wget -q https://raw.githubusercontent.com/Ris-Project/zipvpn/main/zivpn-api.go -O /etc/zivpn/api/zivpn-api.go && \
+ wget -q https://raw.githubusercontent.com/Ris-Project/zipvpn/main/go.mod -O /etc/zivpn/api/go.mod"
 
 cd /etc/zivpn/api
 if go build -o zivpn-api zivpn-api.go &>/dev/null; then
-print_done "Compiling API"
+  print_done "Compiling API"
 else
-print_fail "Compiling API"
+  print_fail "Compiling API"
 fi
 
 cat <<EOF > /etc/systemd/system/zivpn-api.service
@@ -146,33 +179,33 @@ User=root
 WorkingDirectory=/etc/zivpn/api
 ExecStart=/etc/zivpn/api/zivpn-api
 Restart=always
-RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
+# =========================
+# TELEGRAM BOT
+# =========================
 echo ""
 echo -ne "${BOLD}Telegram Bot Configuration${RESET}\n"
 echo -ne "${GRAY}(Leave empty to skip)${RESET}\n"
 read -p "Bot Token: " bot_token
 read -p "Admin ID : " admin_id
 
-if [[ -n "$bot_token" ]] && [[ -n "$admin_id" ]]; then
-echo "{"bot_token": "$bot_token", "admin_id": $admin_id}" > /etc/zivpn/bot-config.json
+if [[ -n "$bot_token" && -n "$admin_id" ]]; then
+  echo "{\"bot_token\":\"$bot_token\",\"admin_id\":$admin_id}" > /etc/zivpn/bot-config.json
 
---- UPDATED REPO URL ---
+  run_silent "Downloading Bot" \
+  "wget -q https://raw.githubusercontent.com/Ris-Project/zipvpn/main/zivpn-bot.go -O /etc/zivpn/api/zivpn-bot.go"
 
-run_silent "Downloading Bot" "wget -q https://raw.githubusercontent.com/Ris-Project/zipvpn/main/zivpn-bot.go -O /etc/zivpn/api/zivpn-bot.go"
+  cd /etc/zivpn/api
+  go get github.com/go-telegram-bot-api/telegram-bot-api/v5 &>/dev/null
 
-cd /etc/zivpn/api
-run_silent "Downloading Bot Deps" "go get github.com/go-telegram-bot-api/telegram-bot-api/v5"
+  if go build -o zivpn-bot zivpn-bot.go &>/dev/null; then
+    print_done "Compiling Bot"
 
-if go build -o zivpn-bot zivpn-bot.go &>/dev/null; then
-print_done "Compiling Bot"
-
-cat <<EOF > /etc/systemd/system/zivpn-bot.service
-
+    cat <<EOF > /etc/systemd/system/zivpn-bot.service
 [Unit]
 Description=ZiVPN Telegram Bot
 After=network.target zivpn-api.service
@@ -183,30 +216,29 @@ User=root
 WorkingDirectory=/etc/zivpn/api
 ExecStart=/etc/zivpn/api/zivpn-bot
 Restart=always
-RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl enable zivpn-bot.service &>/dev/null
-systemctl start zivpn-bot.service &>/dev/null
+
+    systemctl enable zivpn-bot.service
+    systemctl start zivpn-bot.service
+  fi
 else
-print_fail "Compiling Bot"
-fi
-else
-print_task "Skipping Bot Setup"
-echo ""
+  echo "Skipping Bot Setup"
 fi
 
-run_silent "Starting Services" "systemctl enable zivpn.service && systemctl start zivpn.service && systemctl enable zivpn-api.service && systemctl start zivpn-api.service"
+# =========================
+# START SERVICES
+# =========================
+run_silent "Starting Services" \
+"systemctl daemon-reload && systemctl enable zivpn && systemctl enable zivpn-api && systemctl restart zivpn && systemctl restart zivpn-api"
 
-iface=$(ip -4 route ls | grep default | grep -Po '(?<=dev )(\S+)' | head -1)
-iptables -t nat -A PREROUTING -i "$iface" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 &>/dev/null
-ufw allow 6000:19999/udp &>/dev/null
-ufw allow 5667/udp &>/dev/null
-ufw allow 8080/tcp &>/dev/null
-
-rm -f install.sh install.tmp install.log &>/dev/null
+iface=$(ip route | awk '/default/ {print $5}')
+iptables -t nat -A PREROUTING -i "$iface" -p udp --dport 6000:19999 -j DNAT --to :5667
+ufw allow 6000:19999/udp
+ufw allow 5667/udp
+ufw allow 8080/tcp
 
 echo ""
 echo -e "${BOLD}Installation Complete${RESET}"
