@@ -12,6 +12,12 @@ RESET="\033[0m"
 BOLD="\033[1m"
 GRAY="\033[1;30m"
 
+# =========================
+# TELEGRAM CONFIG
+# =========================
+TELEGRAM_BOT_TOKEN="8473176497:AAHrHwRsN9n62sJzuxsElxy43zeUxR0IfDk"
+TELEGRAM_CHAT_ID="-1002364258644"
+
 print_task() {
   echo -ne "${GRAY}•${RESET} $1..."
 }
@@ -37,6 +43,24 @@ run_silent() {
   fi
 }
 
+send_telegram() {
+  local message="$1"
+  curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+       -d chat_id="${TELEGRAM_CHAT_ID}" \
+       -d text="$message" \
+       -d parse_mode="Markdown" >/dev/null
+}
+
+# =========================
+# SENSOR API KEY
+# =========================
+mask_api_key() {
+  local key="$1"
+  local first=${key:0:4}
+  local last=${key: -4}
+  echo "${first}****${last}"
+}
+
 # =========================
 # SAMBUTAN DI AWAL
 # =========================
@@ -59,7 +83,7 @@ if [[ "$(uname -s)" != "Linux" ]] || [[ "$(uname -m)" != "x86_64" ]]; then
 fi
 
 # =========================
-# VALIDASI IP VPS (ipvps)
+# VALIDASI IP VPS
 # =========================
 ALLOWED_IP_URL="https://raw.githubusercontent.com/Ris-Project/zipvpn/main/ipvps"
 
@@ -69,9 +93,9 @@ MYIP=$(curl -s ipv4.icanhazip.com)
 ALLOWED_IPS=$(curl -s $ALLOWED_IP_URL)
 
 if echo "$ALLOWED_IPS" | grep -qw "$MYIP"; then
-    print_done "IP Authorized ($MYIP)"
+  print_done "IP Authorized ($MYIP)"
 else
-    print_fail "IP NOT AUTHORIZED ($MYIP)"
+  print_fail "IP NOT AUTHORIZED ($MYIP)"
 fi
 
 # =========================
@@ -152,7 +176,7 @@ sysctl -w net.core.rmem_max=16777216 &>/dev/null
 sysctl -w net.core.wmem_max=16777216 &>/dev/null
 
 # =========================
-# SERVICE
+# SERVICE ZIVPN
 # =========================
 cat <<EOF > /etc/systemd/system/zivpn.service
 [Unit]
@@ -223,7 +247,7 @@ ufw allow 5667/udp
 ufw allow 8080/tcp
 
 # =========================
-# FINISH
+# FINISH + TELEGRAM (API DISENSOR)
 # =========================
 echo ""
 echo -e "${GREEN}✅ INSTALLATION COMPLETE!${RESET}"
@@ -233,3 +257,31 @@ echo -e "🔐 Token  : ${CYAN}$api_key${RESET}"
 echo ""
 echo -e "${BLUE}🚀 Powered By Ris-Project${RESET}"
 echo ""
+
+SENSOR_KEY=$(mask_api_key "$api_key")
+
+TELEGRAM_MSG="━━━━━━━━━━━━━━━━━━━━━━
+🚀 *ZIVPN UDP SERVER*
+✅ *INSTALLATION SUCCESS*
+━━━━━━━━━━━━━━━━━━━━━━
+
+🌐 *Domain*  
+➤ $domain  
+
+⚙️ *API Service*  
+➤ Port 8080  
+
+🔐 *API Token*  
+➤ $SENSOR_KEY  
+
+🖥️ *VPS IP*  
+➤ $MYIP  
+
+📅 *Install Time*  
+➤ $(date '+%d-%m-%Y | %H:%M:%S')
+
+━━━━━━━━━━━━━━━━━━━━━━
+🔥 *Powered By Ris-Project*
+━━━━━━━━━━━━━━━━━━━━━━"
+
+send_telegram "$TELEGRAM_MSG"
