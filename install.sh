@@ -214,4 +214,3 @@ echo -e "Domain  : ${CYAN}$domain${RESET}"
 echo -e "API     : ${CYAN}Port 8080${RESET}"
 echo -e "Token   : ${CYAN}$api_key${RESET}"
 echo ""
-add agar izin ip ketika ip vps di masikn di github lanjut install
