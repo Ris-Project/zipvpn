@@ -250,7 +250,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 	}
 
-	msgText := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n           MENU UDP ZIVPN  UDP\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n • Domain   : %s\n • City     : %s\n • ISP      : %s\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n```\n👇 Silakan pilih menu dibawah ini:",
+	msgText := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n           MENU ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n • Domain   : %s\n • City     : %s\n • ISP      : %s\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n```\n👇 Silakan pilih menu dibawah ini:",
 		domain, ipInfo.City, ipInfo.Isp)
 
 	msg := tgbotapi.NewMessage(chatID, msgText)
@@ -258,12 +258,12 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("👤 Create Pass", "menu_create"),
-			tgbotapi.NewInlineKeyboardButtonData("🗑️ Delete Pass", "menu_delete"),
+			tgbotapi.NewInlineKeyboardButtonData("👤 Create Password", "menu_create"),
+			tgbotapi.NewInlineKeyboardButtonData("🗑️ Delete Password", "menu_delete"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Pass", "menu_renew"),
-			tgbotapi.NewInlineKeyboardButtonData("📋 List Pass", "menu_list"),
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Password", "menu_renew"),
+			tgbotapi.NewInlineKeyboardButtonData("📋 List Passwords", "menu_list"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📊 System Info", "menu_info"),
