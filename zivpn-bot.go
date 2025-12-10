@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time" // Import time untuk perhitungan tanggal
+	"time" // Tambahkan import time
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -19,7 +19,7 @@ const (
 	ApiUrl        = "http://127.0.0.1:8080/api"
 	ApiKeyFile    = "/etc/zivpn/apikey"
 	// !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
-	MenuPhotoURL    = "https://h.uguu.se/ePURTlNf.jpg" 
+	MenuPhotoURL    = "https://h.uguu.se/ePURTlNf.jpg"
 )
 
 var ApiKey = "AutoFtBot-agskjgdvsbdreiWG1234512SDKrqw"
@@ -164,19 +164,19 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 	case "create_days":
 		days, err := strconv.Atoi(text)
 		if err != nil {
-			sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
+			sendMessage(bot, msg.ChatID, "❌ Durasi harus angka. Coba lagi:")
 			return
 		}
-		createUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days)
+		createUser(bot, msg.ChatID, tempUserData[userID]["username"], days)
 		resetState(userID)
 
 	case "renew_days":
 		days, err := strconv.Atoi(text)
 		if err != nil {
-			sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
+			sendMessage(bot, msg.ChatID, "❌ Durasi harus angka. Coba lagi:")
 			return
 		}
-		renewUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days)
+		renewUser(bot, msg.ChatID, tempUserData[userID]["username"], days)
 		resetState(userID)
 	}
 }
@@ -212,22 +212,16 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, u := range users[start:end] {
-		
-		label := ""
-		data := fmt.Sprintf("select_%s:%s", action, u.Password)
+		statusIcon := "🟢"
+		daysLeft, _ := calculateDaysLeft(u.Expired) // Hitung sisa hari
 
-		if action == "delete" {
-			// Hanya tampilkan ikon dan password untuk aksi hapus
-			label = fmt.Sprintf("🗑️ %s", u.Password) 
-		} else {
-			// Untuk aksi lain (renew), tampilkan status dan tanggal expired (Aktip)
-			statusIcon := "🟢"
-			if u.Status == "Expired" {
-				statusIcon = "🔴"
-			}
-			label = fmt.Sprintf("%s %s (Aktip: %s)", statusIcon, u.Password, u.Expired) // Diganti ke Aktip
+		if u.Status == "Expired" || daysLeft <= 0 { // Tambahkan pengecekan daysLeft
+			statusIcon = "🔴"
 		}
 		
+		// Tambahkan hitungan mundur hari ke label
+		label := fmt.Sprintf("%s %s (Kadaluarsa: %s - %d Hari)", statusIcon, u.Password, u.Expired, daysLeft)
+		data := fmt.Sprintf("select_%s:%s", action, u.Password)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label, data),
 		))
@@ -283,10 +277,10 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		"•  🌐 *Domain*: `%s`\n" +
 		"•  📍 *Lokasi*: `%s`\n" +
 		"•  📡 *ISP*: `%s`\n" +
-        "•  👤 *Total Akun*: `%d`\n\n" + 
-        "Untuk bantuan, hubungi Admin: @JesVpnt\n\n" + 
+        "•  👤 *Total Akun*: `%d`\n\n" + // Modifikasi 1: Tambah Total Akun
+        "Untuk bantuan, hubungi Admin: @JesVpnt\n\n" + // Modifikasi 2: Tambah Info Admin
 		"Silakan pilih menu di bawah ini:",
-		domain, ipInfo.City, ipInfo.Isp, totalUsers) 
+		domain, ipInfo.City, ipInfo.Isp, totalUsers) // Tambahkan totalUsers
     
 	// Hapus pesan terakhir sebelum mengirim menu baru
     deleteLastMessage(bot, chatID) 
@@ -318,7 +312,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         // Track ID pesan yang baru dikirim (foto)
 		lastMessageIDs[chatID] = sentMsg.MessageID
 	} else {
-        // Fallback jika pengiriman foto gagal
+        // Fallback jika pengiriman foto gagal (misal: URL salah/tidak ada)
         log.Printf("Gagal mengirim foto menu dari URL (%s): %v. Mengirim sebagai teks biasa.", MenuPhotoURL, err)
         
         textMsg := tgbotapi.NewMessage(chatID, msgText)
@@ -442,15 +436,19 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		
 		ipInfo, _ := getIpInfo() // Abaikan kesalahan, cukup tampilkan kosong jika gagal
 		
+        // Hitung sisa hari
+        expiredDate := data["expired"].(string)
+        daysLeft, _ := calculateDaysLeft(expiredDate)
+        
 		msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
-			"🗓️ *Aktip*: `%s`\n" + // Diganti ke Aktip
+			"🗓️ *Kadaluarsa*: `%s` (*%d Hari*)\n" + // Modifikasi untuk menampilkan Days Left
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━",
-			data["password"], data["domain"], data["expired"], ipInfo.City, ipInfo.Isp)
+			data["password"], data["domain"], expiredDate, daysLeft, ipInfo.City, ipInfo.Isp) // Tambahkan daysLeft
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -514,15 +512,19 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 			}
 		}
 
+        // Hitung sisa hari
+        newExpiredDate := data["expired"].(string)
+        daysLeft, _ := calculateDaysLeft(newExpiredDate)
+
 		msg := fmt.Sprintf("✅ *AKUN BERHASIL DIPERPANJANG* (%d Hari)\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
-			"🗓️ *Aktip Baru*: `%s`\n" + // Diganti ke Aktip Baru
+			"🗓️ *Kadaluarsa Baru*: `%s` (*%d Hari*)\n" + // Modifikasi untuk menampilkan Days Left
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━",
-			days, data["password"], domain, data["expired"], ipInfo.City, ipInfo.Isp)
+			days, data["password"], domain, newExpiredDate, daysLeft, ipInfo.City, ipInfo.Isp) // Tambahkan daysLeft
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -551,48 +553,19 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 
 		msg := fmt.Sprintf("📋 *DAFTAR AKUN ZIVPN* (Total: %d)\n\n", len(users))
-		
-		// Dapatkan waktu saat ini
-		now := time.Now()
-		
 		for i, u := range users {
 			user := u.(map[string]interface{})
 			statusIcon := "🟢"
 			
-			// Periksa status
-			if user["status"] == "Expired" {
+			expiredDate := user["expired"].(string)
+			daysLeft, _ := calculateDaysLeft(expiredDate) // Hitung sisa hari
+
+			if user["status"] == "Expired" || daysLeft <= 0 { // Tambahkan pengecekan daysLeft
 				statusIcon = "🔴"
 			}
-			
-			password := user["password"].(string)
-			expiredStr := user["expired"].(string)
-			
-			// 1. Hitung sisa hari
-			remainingDays := ""
-			// Format tanggal yang diharapkan dari API adalah "2006-01-02 15:04:05" (Go reference time)
-			expiredTime, timeErr := time.Parse("2006-01-02 15:04:05", expiredStr) 
-			
-			if timeErr == nil {
-				// Hitung selisih hari
-				diff := expiredTime.Sub(now)
-				days := int(diff.Hours() / 24)
-				
-				if days > 0 {
-					remainingDays = fmt.Sprintf(" (%d hari lagi)", days)
-				} else if days == 0 && diff.Hours() > 0 {
-					remainingDays = " (Hari ini Aktip)" // Diperbarui untuk Aktip
-				} else {
-					// Pastikan expired time di masa lalu
-					remainingDays = " (Telah Aktip)" // Diperbarui untuk Aktip
-				}
-			} else {
-				// Fallback jika gagal parse tanggal
-				remainingDays = " (Tanggal tidak valid)"
-				log.Printf("Gagal parse waktu kadaluarsa '%s': %v", expiredStr, timeErr)
-			}
-			
-			// 2. Tampilkan hasil (Diganti ke Aktip)
-			msg += fmt.Sprintf("%d. %s `%s`\n   _Aktip: %s%s_\n", i+1, statusIcon, password, expiredStr, remainingDays)
+            
+            // Tambahkan hitungan mundur hari
+			msg += fmt.Sprintf("%d. %s `%s`\n   _Kadaluarsa: %s (%d Hari)_\n", i+1, statusIcon, user["password"], expiredDate, daysLeft)
 		}
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
@@ -644,4 +617,37 @@ func loadConfig() (BotConfig, error) {
 	}
 	err = json.Unmarshal(file, &config)
 	return config, err
+}
+
+// Fungsi baru untuk menghitung sisa hari kedaluwarsa
+func calculateDaysLeft(expired string) (int, error) {
+	// Format expired yang diharapkan dari API: 2006-01-02 15:04:05
+	layout := "2006-01-02 15:04:05"
+	
+	// Coba parsing dengan layout yang umum
+	tExpired, err := time.Parse(layout, expired)
+	if err != nil {
+		// Jika gagal, coba asumsikan hanya format tanggal
+		layout = "2006-01-02"
+		tExpired, err = time.Parse(layout, expired)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	// Waktu saat ini
+	tNow := time.Now()
+
+	// Hanya bandingkan tanggal (abaikan jam)
+	tExpiredDay := time.Date(tExpired.Year(), tExpired.Month(), tExpired.Day(), 0, 0, 0, 0, time.Local)
+	tNowDay := time.Date(tNow.Year(), tNow.Month(), tNow.Day(), 0, 0, 0, 0, time.Local)
+
+	// Hitung selisih hari
+	days := tExpiredDay.Sub(tNowDay).Hours() / 24
+
+	// Pembulatan ke atas untuk memastikan hari saat ini dihitung
+	if days < 0 {
+		return 0, nil
+	}
+	return int(days + 0.5), nil // Tambahkan 0.5 untuk pembulatan ke hari terdekat
 }
