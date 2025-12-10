@@ -18,20 +18,7 @@ const (
 	ApiUrl        = "http://127.0.0.1:8080/api"
 	ApiKeyFile    = "/etc/zivpn/apikey"
 	// !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
-	MenuPhotoURL    = "https://h.uguu.se/ePURTlNf.jpg"
-	
-	// --- KONSTANTA TOP UP MANUAL ---
-    // Ganti dengan username Telegram Admin Anda
-    ADMIN_USERNAME = "@JesVpnt" 
-    // HARGA AKUN TETAP 
-    PRICE_30_DAYS  = 12000 // Rp. 12.000
-    PRICE_15_DAYS  = 6000  // Rp. 6.000
-
-    // --- KONSTANTA PEMBAYARAN BARU (Silakan GANTI) ---
-	// Ganti dengan URL gambar QRIS Anda (Wajib HTTPS!)
-    QRIS_PHOTO_URL = "https://o.uguu.se/WRYXatAe.png" 
-    // Ganti dengan rekening/metode pembayaran lain
-    BANK_INFO      = "DANA - 0858-888-01241" 
+	MenuPhotoURL    = "https://h.uguu.se/ePURTlNf.jpg" 
 )
 
 var ApiKey = "AutoFtBot-agskjgdvsbdreiWG1234512SDKrqw"
@@ -88,83 +75,36 @@ func main() {
 }
 
 func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
-	// --- Logika State Khusus Admin/Top Up (diproses duluan) ---
+	if msg.From.ID != adminID {
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Anda bukan admin.")
+		sendAndTrack(bot, reply)
+		return
+	}
+
 	state, exists := userStates[msg.From.ID]
 	if exists {
 		handleState(bot, msg, state)
 		return
 	}
 
-	// --- Logika Command Umum ---
 	if msg.IsCommand() {
 		switch msg.Command() {
 		case "start":
-			showMainMenu(bot, msg.Chat.ID) // Semua user bisa mengakses start
+			showMainMenu(bot, msg.Chat.ID)
 		default:
-			if msg.From.ID == adminID {
-				msg := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal.")
-				sendAndTrack(bot, msg)
-			} else {
-				msg := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal. Silakan gunakan /start untuk melihat menu.")
-				sendAndTrack(bot, msg)
-			}
+			msg := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal.")
+			sendAndTrack(bot, msg)
 		}
-	} else if msg.From.ID != adminID {
-		// Non-admin mengirim pesan teks biasa di luar state
-		reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Silakan gunakan /start untuk melihat menu.")
-		sendAndTrack(bot, reply)
 	}
 }
 
 func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID int64) {
-	is_admin := query.From.ID == adminID
-
-	// Filter menu admin jika non-admin mencoba mengakses
-	if !is_admin && (query.Data == "menu_create" || strings.HasPrefix(query.Data, "select_renew:") || strings.HasPrefix(query.Data, "select_delete:") || strings.HasPrefix(query.Data, "confirm_delete:") || query.Data == "menu_delete" || query.Data == "menu_renew" || query.Data == "menu_list") {
-		bot.Request(tgbotapi.NewCallback(query.ID, "⛔ Akses Ditolak untuk menu admin."))
+	if query.From.ID != adminID {
+		bot.Request(tgbotapi.NewCallback(query.ID, "Akses Ditolak"))
 		return
 	}
 
 	switch {
-	// --- ALUR TOP UP MANUAL BARU ---
-    case query.Data == "menu_topup_manual":
-        resetState(query.From.ID)
-        userStates[query.From.ID] = "request_topup_manual_amount"
-		
-        // Hapus pesan terakhir sebelum mengirim menu baru
-        deleteLastMessage(bot, query.Message.Chat.ID) 
-        
-		sendMessage(bot, query.Message.Chat.ID, "💳 *TOP UP SALDO (Manual)*\n\n" +
-            "Silakan masukkan *nominal* Top Up yang diinginkan (Contoh: 10000):")
-            
-    case query.Data == "menu_buy_15_days":
-        showManualPurchaseConfirmation(bot, query.Message.Chat.ID, 15)
-
-    case query.Data == "menu_buy_30_days":
-        showManualPurchaseConfirmation(bot, query.Message.Chat.ID, 30)
-    
-    // --- PENANGANAN KONFIRMASI ADMIN BARU ---
-    case strings.HasPrefix(query.Data, "admin_confirm:"):
-        if !is_admin { 
-            bot.Request(tgbotapi.NewCallback(query.ID, "⛔ Akses Ditolak."))
-            return
-        }
-        parts := strings.Split(query.Data, ":") // ["admin_confirm", "USER_ID", "AMOUNT"]
-        targetUserID, _ := strconv.ParseInt(parts[1], 10, 64)
-        amount, _ := strconv.Atoi(parts[2])
-        
-        // Panggil fungsi proses saldo
-        processAdminTopUp(bot, query.Message, targetUserID, amount)
-        
-    case query.Data == "admin_ignore":
-        if is_admin {
-            bot.Request(tgbotapi.NewCallback(query.ID, "Permintaan Top Up diabaikan."))
-            // Ubah pesan notifikasi Admin agar tidak ada tombol lagi
-            editAdminNotification(bot, query.Message, "❌ PERMINTAAN DIABAIKAN")
-        }
-
-
-	// --- Menu Admin Lama ---
 	case query.Data == "menu_create":
 		userStates[query.From.ID] = "create_username"
 		tempUserData[query.From.ID] = make(map[string]string)
@@ -215,41 +155,6 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 	text := strings.TrimSpace(msg.Text)
 
 	switch state {
-    // --- STATE BARU: MEMINTA NOMINAL TOP UP MANUAL ---
-    case "request_topup_manual_amount":
-		amount, err := strconv.Atoi(text)
-		if err != nil || amount <= 0 { 
-			sendMessage(bot, msg.Chat.ID, "❌ Nominal harus berupa angka positif. Coba lagi:")
-			return
-		}
-
-        // SIMPAN NOMINAL DI tempUserData
-        tempUserData[userID] = map[string]string{"amount": text}
-        
-        // PINDAH KE STATE BARU UNTUK KONFIRMASI PEMBAYARAN (MENUNGGU FOTO)
-        userStates[userID] = "confirm_topup_payment" 
-        
-        // PANGGIL FUNGSI UNTUK MENAMPILKAN QRIS
-        showPaymentDetails(bot, msg.Chat.ID, msg.From.FirstName, userID, amount)
-
-    // --- STATE BARU: USER MENGIRIM BUKTI PEMBAYARAN (GAMBAR) ---
-    case "confirm_topup_payment":
-        // Cek apakah pesan berupa foto (bukti pembayaran)
-        if msg.Photo == nil {
-            sendMessage(bot, msg.Chat.ID, "❌ Mohon kirimkan *bukti transfer (foto)* Anda.")
-            return
-        }
-        
-        // Ambil nominal yang disimpan
-        amountStr := tempUserData[userID]["amount"]
-        amount, _ := strconv.Atoi(amountStr)
-        
-        // Kirim bukti dan notifikasi ke Admin
-        sendPaymentProofToAdmin(bot, msg.Chat.ID, msg.From.FirstName, userID, amount, msg.Photo[len(msg.Photo)-1].FileID)
-
-        resetState(userID) 
-        
-    // --- STATE ADMIN LAMA ---
 	case "create_username":
 		tempUserData[userID]["username"] = text
 		userStates[userID] = "create_days"
@@ -274,174 +179,6 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 		resetState(userID)
 	}
 }
-
-// --- FUNGSI BARU UNTUK MENAMPILKAN DETAIL PEMBAYARAN QRIS ---
-func showPaymentDetails(bot *tgbotapi.BotAPI, chatID int64, name string, userID int64, amount int) {
-    // Pesan ke user berisi detail pembayaran
-    userMsg := fmt.Sprintf("💳 *DETAIL PEMBAYARAN TOP UP*\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "💰 *Nominal Top Up*: `Rp%d`\n" +
-        "🏦 *Metode Pembayaran*: %s\n\n" +
-        "Silakan transfer ke QRIS/rekening di atas.\n" +
-        "*Setelah transfer*, kirimkan *bukti pembayaran (foto)* di chat ini.",
-        amount, BANK_INFO)
-        
-    // Tombol untuk membatalkan
-    keyboard := tgbotapi.NewInlineKeyboardMarkup(
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("❌ Batal Top Up", "cancel"), 
-        ),
-    )
-        
-    // Kirim foto QRIS
-	photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FileURL(QRIS_PHOTO_URL))
-	photoMsg.Caption = userMsg
-	photoMsg.ParseMode = "Markdown"
-	photoMsg.ReplyMarkup = keyboard
-	
-	deleteLastMessage(bot, chatID)
-	
-	sentMsg, err := bot.Send(photoMsg)
-	if err != nil {
-        log.Printf("Gagal mengirim foto QRIS dari URL (%s): %v. Mengirim sebagai teks biasa.", QRIS_PHOTO_URL, err)
-        
-        textMsg := tgbotapi.NewMessage(chatID, userMsg)
-        textMsg.ParseMode = "Markdown"
-        textMsg.ReplyMarkup = keyboard
-        sendAndTrack(bot, textMsg)
-	} else {
-        lastMessageIDs[chatID] = sentMsg.MessageID // Track ID pesan foto
-    }
-}
-
-// --- FUNGSI BARU UNTUK MENGIRIM BUKTI PEMBAYARAN KE ADMIN (DENGAN TOMBOL KONFIRMASI) ---
-func sendPaymentProofToAdmin(bot *tgbotapi.BotAPI, chatID int64, name string, userID int64, amount int, fileID string) {
-    // Pesan ke user (Penutup)
-    userMsg := fmt.Sprintf("✅ *BUKTI TRANSFER TERKIRIM*\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "💰 *Nominal Top Up*: `Rp%d`\n\n" +
-        "Bukti pembayaran Anda telah dikirim ke Admin. Mohon tunggu, Admin `%s` akan segera memproses konfirmasi Anda.",
-        amount, ADMIN_USERNAME)
-        
-	reply := tgbotapi.NewMessage(chatID, userMsg)
-	reply.ParseMode = "Markdown"
-	deleteLastMessage(bot, chatID)
-	bot.Send(reply) 
-
-    // Pesan notifikasi ke Admin (Berupa Foto Bukti)
-    adminNotifyCaption := fmt.Sprintf("🔔 *NOTIFIKASI TOP UP MANUAL (MENUNGGU KONFIRMASI)*\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "👤 *Nama User*: `%s`\n" +
-        "🆔 *ID Telegram*: `%d`\n" +
-        "💰 *Nominal Diminta*: `Rp%d`\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "Admin, harap konfirmasi bukti pembayaran di atas dan proses Top Up ini secara manual.",
-        name, userID, amount)
-        
-    config, _ := loadConfig() // Ambil AdminID
-    if config.AdminID != 0 {
-        adminReply := tgbotapi.NewPhoto(config.AdminID, tgbotapi.FileID(fileID))
-        adminReply.Caption = adminNotifyCaption
-        adminReply.ParseMode = "Markdown"
-        
-        // Tombol Konfirmasi/Tolak
-        adminReply.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
-            tgbotapi.NewInlineKeyboardRow(
-                // Data callback: admin_confirm:[USER_ID]:[AMOUNT]
-                tgbotapi.NewInlineKeyboardButtonData("✅ KONFIRMASI DAN TAMBAH SALDO", fmt.Sprintf("admin_confirm:%d:%d", userID, amount)),
-            ),
-            tgbotapi.NewInlineKeyboardRow(
-                tgbotapi.NewInlineKeyboardButtonURL("👤 Chat User", fmt.Sprintf("tg://user?id=%d", userID)),
-                tgbotapi.NewInlineKeyboardButtonData("❌ Tolak/Abaikan", "admin_ignore"), 
-            ),
-        )
-        bot.Send(adminReply)
-    }
-
-	showMainMenu(bot, chatID)
-}
-
-// --- FUNGSI BARU UNTUK MEMPROSES TOP UP OLEH ADMIN (setelah tombol ditekan) ---
-func processAdminTopUp(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, targetUserID int64, amount int) {
-	// Panggil API (Asumsi) untuk menambahkan saldo
-	res, err := apiCall("POST", "/user/add_balance", map[string]interface{}{
-		"user_id": targetUserID,
-		"amount":  amount,
-	})
-
-	if err != nil || res["success"] != true {
-		errMsg := "❌ Gagal memproses Top Up Saldo! Error API."
-		if res["message"] != nil {
-			errMsg = fmt.Sprintf("❌ Gagal: %s", res["message"])
-		}
-		// Kirim notifikasi error ke Admin
-		sendMessage(bot, msg.ChatID, errMsg)
-		return
-	}
-
-    // Ubah pesan notifikasi Admin
-    editAdminNotification(bot, msg, fmt.Sprintf("✅ KONFIRMASI SUKSES\nSaldo Rp%d berhasil ditambahkan ke ID %d.", amount, targetUserID))
-    
-    // Kirim notifikasi ke User
-    userNotifyMsg := fmt.Sprintf("🎉 *TOP UP BERHASIL*\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "💰 *Nominal Ditambahkan*: `Rp%d`\n" +
-        "Anda sekarang dapat menggunakan saldo ini untuk pembelian akun.",
-        amount)
-        
-    userReply := tgbotapi.NewMessage(targetUserID, userNotifyMsg)
-	userReply.ParseMode = "Markdown"
-	bot.Send(userReply)
-}
-
-// --- FUNGSI UTILITY BARU UNTUK MENGEDIT PESAN ADMIN ---
-func editAdminNotification(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, newStatusText string) {
-    // Ambil caption lama dan tambahkan status baru
-    newCaption := fmt.Sprintf("%s\n\n**STATUS:** %s", msg.Caption, newStatusText)
-    
-    // Karena pesan notifikasi adalah foto, gunakan EditMessageCaption
-    editMsg := tgbotapi.NewEditMessageCaption(msg.ChatID, msg.MessageID, newCaption)
-    editMsg.ParseMode = "Markdown"
-    editMsg.ReplyMarkup = nil // Hapus tombol
-    bot.Request(editMsg)
-}
-
-
-// --- FUNGSI LAMA ---
-
-// --- FUNGSI BARU UNTUK KONFIRMASI PEMBELIAN AKUN ---
-func showManualPurchaseConfirmation(bot *tgbotapi.BotAPI, chatID int64, days int) {
-    price := PRICE_15_DAYS
-    if days == 30 {
-        price = PRICE_30_DAYS
-    }
-    
-    msg := fmt.Sprintf("💳 *PEMBELIAN AKUN %d HARI*\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "💰 *Harga*: `Rp%d`\n\n" +
-        "Untuk membeli akun, Anda harus melakukan Top Up Saldo terlebih dahulu. " +
-        "Setelah saldo Anda mencukupi, silakan gunakan menu 'Buat Akun' dan masukkan durasi %d hari.\n\n" +
-        "Hubungi Admin %s untuk pembayaran.",
-        days, price, days, ADMIN_USERNAME)
-        
-    reply := tgbotapi.NewMessage(chatID, msg)
-    reply.ParseMode = "Markdown"
-    
-    // Tombol untuk langsung ke Top Up Manual
-    reply.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("💳 Lanjut ke Top Up Manual", "menu_topup_manual"),
-        ),
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali ke Menu Utama", "cancel"), 
-        ),
-    )
-    
-	deleteLastMessage(bot, chatID)
-	sendAndTrack(bot, reply)
-}
-
-// --- FUNGSI UTILITY ---
 
 func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action string) {
 	users, err := getUsers()
@@ -512,7 +249,6 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 	sendAndTrack(bot, msg)
 }
 
-// GANTI func showMainMenu (Penambahan Saldo)
 func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	ipInfo, _ := getIpInfo()
 	domain := "Unknown"
@@ -525,9 +261,6 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 	}
 
-    // Ambil Saldo User (BARU)
-    userBalance, _ := getBalance(chatID) 
-
     // Ambil Total Akun
     totalUsers := 0
     if users, err := getUsers(); err == nil {
@@ -539,28 +272,16 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		"•  🌐 *Domain*: `%s`\n" +
 		"•  📍 *Lokasi*: `%s`\n" +
 		"•  📡 *ISP*: `%s`\n" +
-        "•  👤 *Total Akun*: `%d`\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "💳 *Saldo Anda*: `Rp%d`\n" + // <-- TAMPILKAN SALDO
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-        "Untuk Top Up atau bantuan, hubungi Admin: %s\n\n" +
+        "•  👤 *Total Akun*: `%d`\n\n" + // Modifikasi 1: Tambah Total Akun
+        "Untuk bantuan, hubungi Admin: @JesVpnt\n\n" + // Modifikasi 2: Tambah Info Admin
 		"Silakan pilih menu di bawah ini:",
-		domain, ipInfo.City, ipInfo.Isp, totalUsers, userBalance, ADMIN_USERNAME)
+		domain, ipInfo.City, ipInfo.Isp, totalUsers) // Tambahkan totalUsers
     
 	// Hapus pesan terakhir sebelum mengirim menu baru
     deleteLastMessage(bot, chatID) 
 
     // Buat keyboard inline
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-        // --- MENU TOP UP DAN BELI AKUN UNTUK SEMUA USER ---
-        tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("💳 Top Up Saldo (Manual)", "menu_topup_manual"), 
-		),
-        tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("🔑 Beli Akun 15 Hari (Rp%d)", PRICE_15_DAYS), "menu_buy_15_days"), 
-			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("🔑 Beli Akun 30 Hari (Rp%d)", PRICE_30_DAYS), "menu_buy_30_days"), 
-		),
-        // --- MENU ADMIN LAMA ---
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun", "menu_create"),
 			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
@@ -586,7 +307,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         // Track ID pesan yang baru dikirim (foto)
 		lastMessageIDs[chatID] = sentMsg.MessageID
 	} else {
-        // Fallback jika pengiriman foto gagal
+        // Fallback jika pengiriman foto gagal (misal: URL salah/tidak ada)
         log.Printf("Gagal mengirim foto menu dari URL (%s): %v. Mengirim sebagai teks biasa.", MenuPhotoURL, err)
         
         textMsg := tgbotapi.NewMessage(chatID, msgText)
@@ -694,32 +415,6 @@ func getUsers() ([]UserData, error) {
 	return users, nil
 }
 
-// --- FUNGSI BARU (Asumsi API untuk Saldo) ---
-func getBalance(userID int64) (int, error) {
-	// Panggil API untuk mengambil saldo berdasarkan Telegram ID
-	res, err := apiCall("GET", fmt.Sprintf("/user/balance/%d", userID), nil) 
-	if err != nil {
-		// Asumsi saldo 0 jika error/user baru
-		return 0, err 
-	}
-
-	if res["success"] != true {
-		return 0, fmt.Errorf("failed to get balance: %s", res["message"])
-	}
-
-	// Asumsi API mengembalikan saldo di field "balance"
-	if data, ok := res["data"].(map[string]interface{}); ok {
-		if balanceFloat, ok := data["balance"].(float64); ok {
-			return int(balanceFloat), nil
-		}
-		if balanceInt, ok := data["balance"].(int); ok {
-			return balanceInt, nil
-		}
-	}
-	return 0, nil // Default ke 0 jika format tidak valid
-}
-
-
 func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": username,
@@ -734,7 +429,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
 		
-		ipInfo, _ := getIpInfo() 
+		ipInfo, _ := getIpInfo() // Abaikan kesalahan, cukup tampilkan kosong jika gagal
 		
 		msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
@@ -793,7 +488,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
 		
-		ipInfo, _ := getIpInfo() 
+		ipInfo, _ := getIpInfo() // Abaikan kesalahan
 
 		domain := "Unknown"
 		if d, ok := data["domain"].(string); ok && d != "" {
