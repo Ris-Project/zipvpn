@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time" // Import time untuk perhitungan tanggal
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -211,12 +212,22 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, u := range users[start:end] {
-		statusIcon := "🟢"
-		if u.Status == "Expired" {
-			statusIcon = "🔴"
-		}
-		label := fmt.Sprintf("%s %s (Kadaluarsa: %s)", statusIcon, u.Password, u.Expired)
+		
+		label := ""
 		data := fmt.Sprintf("select_%s:%s", action, u.Password)
+
+		if action == "delete" {
+			// Hanya tampilkan ikon dan password untuk aksi hapus
+			label = fmt.Sprintf("🗑️ %s", u.Password) 
+		} else {
+			// Untuk aksi lain (renew), tampilkan status dan tanggal expired (Aktip)
+			statusIcon := "🟢"
+			if u.Status == "Expired" {
+				statusIcon = "🔴"
+			}
+			label = fmt.Sprintf("%s %s (Aktip: %s)", statusIcon, u.Password, u.Expired) // Diganti ke Aktip
+		}
+		
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label, data),
 		))
@@ -272,10 +283,10 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		"•  🌐 *Domain*: `%s`\n" +
 		"•  📍 *Lokasi*: `%s`\n" +
 		"•  📡 *ISP*: `%s`\n" +
-        "•  👤 *Total Akun*: `%d`\n\n" + // Modifikasi 1: Tambah Total Akun
-        "Untuk bantuan, hubungi Admin: @JesVpnt\n\n" + // Modifikasi 2: Tambah Info Admin
+        "•  👤 *Total Akun*: `%d`\n\n" + 
+        "Untuk bantuan, hubungi Admin: @JesVpnt\n\n" + 
 		"Silakan pilih menu di bawah ini:",
-		domain, ipInfo.City, ipInfo.Isp, totalUsers) // Tambahkan totalUsers
+		domain, ipInfo.City, ipInfo.Isp, totalUsers) 
     
 	// Hapus pesan terakhir sebelum mengirim menu baru
     deleteLastMessage(bot, chatID) 
@@ -307,7 +318,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         // Track ID pesan yang baru dikirim (foto)
 		lastMessageIDs[chatID] = sentMsg.MessageID
 	} else {
-        // Fallback jika pengiriman foto gagal (misal: URL salah/tidak ada)
+        // Fallback jika pengiriman foto gagal
         log.Printf("Gagal mengirim foto menu dari URL (%s): %v. Mengirim sebagai teks biasa.", MenuPhotoURL, err)
         
         textMsg := tgbotapi.NewMessage(chatID, msgText)
@@ -435,7 +446,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
-			"🗓️ *Kadaluarsa*: `%s`\n" +
+			"🗓️ *Aktip*: `%s`\n" + // Diganti ke Aktip
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -507,7 +518,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
-			"🗓️ *Kadaluarsa Baru*: `%s`\n" +
+			"🗓️ *Aktip Baru*: `%s`\n" + // Diganti ke Aktip Baru
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -540,13 +551,48 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 
 		msg := fmt.Sprintf("📋 *DAFTAR AKUN ZIVPN* (Total: %d)\n\n", len(users))
+		
+		// Dapatkan waktu saat ini
+		now := time.Now()
+		
 		for i, u := range users {
 			user := u.(map[string]interface{})
 			statusIcon := "🟢"
+			
+			// Periksa status
 			if user["status"] == "Expired" {
 				statusIcon = "🔴"
 			}
-			msg += fmt.Sprintf("%d. %s `%s`\n   _Kadaluarsa: %s_\n", i+1, statusIcon, user["password"], user["expired"])
+			
+			password := user["password"].(string)
+			expiredStr := user["expired"].(string)
+			
+			// 1. Hitung sisa hari
+			remainingDays := ""
+			// Format tanggal yang diharapkan dari API adalah "2006-01-02 15:04:05" (Go reference time)
+			expiredTime, timeErr := time.Parse("2006-01-02 15:04:05", expiredStr) 
+			
+			if timeErr == nil {
+				// Hitung selisih hari
+				diff := expiredTime.Sub(now)
+				days := int(diff.Hours() / 24)
+				
+				if days > 0 {
+					remainingDays = fmt.Sprintf(" (%d hari lagi)", days)
+				} else if days == 0 && diff.Hours() > 0 {
+					remainingDays = " (Hari ini Aktip)" // Diperbarui untuk Aktip
+				} else {
+					// Pastikan expired time di masa lalu
+					remainingDays = " (Telah Aktip)" // Diperbarui untuk Aktip
+				}
+			} else {
+				// Fallback jika gagal parse tanggal
+				remainingDays = " (Tanggal tidak valid)"
+				log.Printf("Gagal parse waktu kadaluarsa '%s': %v", expiredStr, timeErr)
+			}
+			
+			// 2. Tampilkan hasil (Diganti ke Aktip)
+			msg += fmt.Sprintf("%d. %s `%s`\n   _Aktip: %s%s_\n", i+1, statusIcon, password, expiredStr, remainingDays)
 		}
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
