@@ -261,13 +261,21 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 	}
 
+    // Ambil Total Akun
+    totalUsers := 0
+    if users, err := getUsers(); err == nil {
+        totalUsers = len(users)
+    }
+
 	msgText := fmt.Sprintf("✨ *BOT PGETUNNEL ZIVPN UDP*\n\n" +
 		"Server Info:\n" +
 		"•  🌐 *Domain*: `%s`\n" +
 		"•  📍 *Lokasi*: `%s`\n" +
-		"•  📡 *ISP*: `%s`\n\n" +
+		"•  📡 *ISP*: `%s`\n" +
+        "•  👤 *Total Akun*: `%d`\n\n" + // Modifikasi 1: Tambah Total Akun
+        "Untuk bantuan, hubungi Admin: @JesVpnt\n\n" + // Modifikasi 2: Tambah Info Admin
 		"Silakan pilih menu di bawah ini:",
-		domain, ipInfo.City, ipInfo.Isp)
+		domain, ipInfo.City, ipInfo.Isp, totalUsers) // Tambahkan totalUsers
     
 	// Hapus pesan terakhir sebelum mengirim menu baru
     deleteLastMessage(bot, chatID) 
