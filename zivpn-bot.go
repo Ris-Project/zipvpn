@@ -546,7 +546,7 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
 			if user["status"] == "Expired" {
 				statusIcon = "🔴"
 			}
-			msg += fmt.Sprintf("%d. %s `%s`\n   _Expired: %s_\n", i+1, statusIcon, user["password"], user["expired"])
+			msg += fmt.Sprintf("%d. %s `%s` Expired: %s_\n", i+1, statusIcon, user["password"], user["expired"])
 		}
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
