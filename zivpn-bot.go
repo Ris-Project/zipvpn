@@ -18,7 +18,9 @@ const (
 	ApiUrl        = "http://127.0.0.1:8080/api"
 	ApiKeyFile    = "/etc/zivpn/apikey"
 	// !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
-	MenuPhotoURL    = "https://h.uguu.se/ePURTlNf.jpg" 
+	MenuPhotoURL    = "https://h.uguu.se/ePURTlNf.jpg"
+	// !!! Tambahkan URL Gambar QRIS di sini !!!
+	QrisPhotoURL    = "https://o.uguu.se/WRYXatAe.png"
 )
 
 var ApiKey = "AutoFtBot-agskjgdvsbdreiWG1234512SDKrqw"
@@ -67,7 +69,12 @@ func main() {
 
 	for update := range updates {
 		if update.Message != nil {
-			handleMessage(bot, update.Message, config.AdminID)
+			// Deteksi apakah pesan mengandung foto
+			if update.Message.Photo != nil && len(*update.Message.Photo) > 0 {
+				handlePhoto(bot, update.Message, config.AdminID) // Panggil handler foto
+			} else {
+				handleMessage(bot, update.Message, config.AdminID)
+			}
 		} else if update.CallbackQuery != nil {
 			handleCallback(bot, update.CallbackQuery, config.AdminID)
 		}
@@ -98,6 +105,53 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 	}
 }
 
+// Fungsi BARU: handlePhoto
+func handlePhoto(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
+	if msg.From.ID != adminID {
+		// Jika bukan admin, cek apakah sedang dalam state menunggu bukti
+		state, exists := userStates[msg.From.ID]
+		if exists && state == "topup_photo_proof" {
+			
+			userID := msg.From.ID
+			nominal := tempUserData[userID]["nominal"]
+			
+			// Ambil foto kualitas terbaik (indeks terakhir)
+			photo := (*msg.Photo)[len(*msg.Photo)-1]
+			
+			// Buat caption untuk admin
+			adminCaption := fmt.Sprintf("⚠️ *NOTIFIKASI TOP UP BARU (BUKTI GAMBAR)*\n\n" +
+				"👤 *User ID (Admin)*: `%d`\n" + // Asumsi user yang berinteraksi adalah admin
+				"💵 *Nominal*: `%s`\n" +
+				"🧾 *Keterangan*: Bukti gambar terlampir.\n\n" +
+				"Mohon segera dicek dan diproses.", userID, nominal)
+
+			// Kirim foto sebagai notifikasi ke admin (menggunakan chatID user/admin)
+            adminNotification := tgbotapi.NewPhoto(msg.Chat.ID, tgbotapi.FileID(photo.FileID))
+            adminNotification.Caption = adminCaption
+            adminNotification.ParseMode = "Markdown"
+            bot.Send(adminNotification)
+			
+			// Kirim konfirmasi ke user
+			sendMessage(bot, msg.Chat.ID, "✅ Bukti top up (gambar) Anda telah dikirim. Admin akan segera memproses akun Anda.")
+			
+			// Reset state
+			resetState(userID)
+			showMainMenu(bot, msg.Chat.ID)
+			return
+		}
+
+		// Jika bukan admin dan tidak dalam state topup
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak atau bukan waktu yang tepat untuk mengirim gambar.")
+		sendAndTrack(bot, reply)
+		return
+	}
+	
+	// Abaikan foto dari admin jika tidak dalam state khusus
+	reply := tgbotapi.NewMessage(msg.Chat.ID, "Admin, saya tidak memproses foto Anda saat ini.")
+	sendAndTrack(bot, reply)
+}
+
+
 func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID int64) {
 	if query.From.ID != adminID {
 		bot.Request(tgbotapi.NewCallback(query.ID, "Akses Ditolak"))
@@ -117,6 +171,11 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 		listUsers(bot, query.Message.Chat.ID)
 	case query.Data == "menu_info":
 		systemInfo(bot, query.Message.Chat.ID)
+	case query.Data == "menu_topup":
+		showTopUpMenu(bot, query.Message.Chat.ID)
+	case strings.HasPrefix(query.Data, "topup_nominal:"):
+		nominal := strings.TrimPrefix(query.Data, "topup_nominal:")
+		showTopUpNominal(bot, query.Message.Chat.ID, query.From.ID, nominal)
 	case query.Data == "cancel":
 		delete(userStates, query.From.ID)
 		delete(tempUserData, query.From.ID)
@@ -177,6 +236,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 		}
 		renewUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days)
 		resetState(userID)
+	// state topup_photo_proof tidak ditangani di sini karena menunggu PHOTO, bukan TEXT
 	}
 }
 
@@ -263,19 +323,45 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 
     // Ambil Total Akun
     totalUsers := 0
-    if users, err := getUsers(); err == nil {
+    users, err := getUsers()
+    if err == nil {
         totalUsers = len(users)
     }
+
+    // --- LOGIC SALDO USER (BARU) ---
+    var adminAccountExpired string
+    var adminAccountStatus string
+
+    if len(users) > 0 {
+        // Anggap data akun pertama adalah akun yang relevan atau akun yang ingin dipantau
+        adminAccountExpired = users[0].Expired
+        adminAccountStatus = users[0].Status
+    } else {
+        adminAccountExpired = "N/A"
+        adminAccountStatus = "N/A"
+    }
+
+    // Tentukan ikon status
+    statusIcon := "❓"
+    if adminAccountStatus == "Active" {
+        statusIcon = "✅"
+    } else if adminAccountStatus == "Expired" {
+        statusIcon = "❌"
+    }
+    // --- END LOGIC SALDO USER ---
 
 	msgText := fmt.Sprintf("✨ *WELCOME TO BOT PGETUNNEL UDP ZIVPN*\n\n" +
 		"Server Info:\n" +
 		"•  🌐 *Domain*: `%s`\n" +
 		"•  📍 *Lokasi*: `%s`\n" +
 		"•  📡 *ISP*: `%s`\n" +
-        "•  👤 *Total Akun*: `%d`\n\n" + // Modifikasi 1: Tambah Total Akun
-        "Untuk bantuan, hubungi Admin: @JesVpnt\n\n" + // Modifikasi 2: Tambah Info Admin
+        "•  👤 *Total Akun*: `%d`\n\n" +
+        "*AKUN INFO:*\n" +
+        "•  *Status*: %s `%s`\n" +
+        "•  *Kadaluarsa*: `%s`\n\n" +
+        "Untuk bantuan, hubungi Admin: @JesVpnt\n\n" +
 		"Silakan pilih menu di bawah ini:",
-		domain, ipInfo.City, ipInfo.Isp, totalUsers) // Tambahkan totalUsers
+		domain, ipInfo.City, ipInfo.Isp, totalUsers, statusIcon, adminAccountStatus, adminAccountExpired)
     
 	// Hapus pesan terakhir sebelum mengirim menu baru
     deleteLastMessage(bot, chatID) 
@@ -291,6 +377,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 			tgbotapi.NewInlineKeyboardButtonData("🗑️ Hapus Akun", "menu_delete"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("💳 Top Up", "menu_topup"),
 			tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
 		),
 	)
@@ -307,9 +394,83 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         // Track ID pesan yang baru dikirim (foto)
 		lastMessageIDs[chatID] = sentMsg.MessageID
 	} else {
-        // Fallback jika pengiriman foto gagal (misal: URL salah/tidak ada)
+        // Fallback jika pengiriman foto gagal
         log.Printf("Gagal mengirim foto menu dari URL (%s): %v. Mengirim sebagai teks biasa.", MenuPhotoURL, err)
         
+        textMsg := tgbotapi.NewMessage(chatID, msgText)
+        textMsg.ParseMode = "Markdown"
+        textMsg.ReplyMarkup = keyboard
+        sendAndTrack(bot, textMsg)
+	}
+}
+
+// Fungsi showTopUpMenu yang dimodifikasi (memilih nominal)
+func showTopUpMenu(bot *tgbotapi.BotAPI, chatID int64) {
+	// Hapus pesan terakhir sebelum mengirim menu baru
+    deleteLastMessage(bot, chatID) 
+
+	msgText := fmt.Sprintf("💳 *MENU TOP UP MANUAL*\n\n" +
+		"Pilih durasi akun yang Anda inginkan di bawah ini:")
+
+    // Buat keyboard inline dengan nominal harga
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("💰 30 Hari (Rp. 10.000)", "topup_nominal:10.000"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("💵 15 Hari (Rp. 5.000)", "topup_nominal:5.000"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali ke Menu Utama", "cancel"),
+		),
+	)
+
+    // Pesan dikirim sebagai teks biasa karena fungsinya adalah memilih nominal
+	msg := tgbotapi.NewMessage(chatID, msgText)
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = keyboard
+	sendAndTrack(bot, msg)
+}
+
+// Fungsi BARU: showTopUpNominal (dipanggil setelah memilih nominal)
+func showTopUpNominal(bot *tgbotapi.BotAPI, chatID int64, userID int64, nominal string) {
+    // Hapus pesan terakhir sebelum mengirim pesan baru
+    deleteLastMessage(bot, chatID) 
+
+    msgText := fmt.Sprintf("💳 *TOP UP NOMINAL*\n\n" +
+		"Anda memilih nominal sebesar *Rp. %s*.\n" +
+		"Silakan lakukan pembayaran ke QRIS di bawah ini.\n\n" +
+		"*Setelah membayar, kirimkan BUKTI TRANSFER (gambar) di chat ini* untuk konfirmasi cepat.", nominal)
+
+    // Buat keyboard inline
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonURL("💬 Chat Admin Langsung", "https://t.me/JesVpnt"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⬅️ Batalkan Top Up", "cancel"),
+		),
+	)
+
+    // Buat pesan foto dari URL QRIS
+	photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FileURL(QrisPhotoURL))
+	photoMsg.Caption = msgText
+	photoMsg.ParseMode = "Markdown"
+	photoMsg.ReplyMarkup = keyboard
+
+	// Atur State di SINI: Menunggu foto/gambar bukti
+	userStates[userID] = "topup_photo_proof" 
+	tempUserData[userID] = map[string]string{"nominal": nominal}
+
+    // Kirim foto QRIS
+	sentMsg, err := bot.Send(photoMsg)
+	if err == nil {
+        // Track ID pesan yang baru dikirim (foto)
+		lastMessageIDs[chatID] = sentMsg.MessageID
+	} else {
+        // Fallback jika pengiriman foto gagal
+        log.Printf("Gagal mengirim foto QRIS dari URL (%s): %v. Mengirim sebagai teks biasa.", QrisPhotoURL, err)
+
         textMsg := tgbotapi.NewMessage(chatID, msgText)
         textMsg.ParseMode = "Markdown"
         textMsg.ReplyMarkup = keyboard
