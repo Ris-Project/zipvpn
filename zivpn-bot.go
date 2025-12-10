@@ -72,30 +72,14 @@ func main() {
 	}
 }
 
-// ⬇️ FUNGSI INI TELAH DIPERBAIKI ⬇️
 func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
-	userID := msg.From.ID
-    
-	// 1. Tangani perintah /start untuk semua pengguna
-    if msg.IsCommand() && msg.Command() == "start" {
-        if userID == adminID {
-            showMainMenu(bot, msg.Chat.ID)
-        } else {
-            reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Bot ini dikhususkan untuk Administrator.")
-            sendAndTrack(bot, reply)
-        }
-        return // Hentikan di sini setelah menangani /start
-    }
-    
-    // 2. Pemeriksaan Admin ketat untuk SEMUA fungsi lainnya (state, perintah lain)
-    if userID != adminID {
+	if msg.From.ID != adminID {
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Anda bukan admin.")
 		sendAndTrack(bot, reply)
-		return // Hentikan jika bukan admin
+		return
 	}
 
-	// Hanya admin yang bisa melanjutkan ke state handling atau perintah lain
-	state, exists := userStates[userID]
+	state, exists := userStates[msg.From.ID]
 	if exists {
 		handleState(bot, msg, state)
 		return
@@ -103,14 +87,14 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 
 	if msg.IsCommand() {
 		switch msg.Command() {
-		// Perintah /start sudah ditangani di atas
+		case "start":
+			showMainMenu(bot, msg.Chat.ID)
 		default:
 			msg := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal.")
 			sendAndTrack(bot, msg)
 		}
 	}
 }
-// ⬆️ AKHIR DARI FUNGSI YANG DIPERBAIKI ⬆️
 
 func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID int64) {
 	if query.From.ID != adminID {
@@ -119,15 +103,10 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 	}
 
 	switch {
-	case query.Data == "menu_trial": // BARU: Menangani Trial
-		userStates[query.From.ID] = "create_trial_username"
-		tempUserData[query.From.ID] = make(map[string]string)
-		sendMessage(bot, query.Message.Chat.ID, "⏳ TRIAL 30 MENIT\n👤 Masukkan Password:")
-
 	case query.Data == "menu_create":
 		userStates[query.From.ID] = "create_username"
 		tempUserData[query.From.ID] = make(map[string]string)
-		sendMessage(bot, query.Message.Chat.ID, "👤 Masukkan Password:")
+		sendMessage(bot, query.Message.Chat.ID, "🔑 *MENU CREATE*\nSilakan masukkan **PASSWORD** yang diinginkan:")
 	case query.Data == "menu_delete":
 		showUserSelection(bot, query.Message.Chat.ID, 1, "delete")
 	case query.Data == "menu_renew":
@@ -149,10 +128,10 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 		username := strings.TrimPrefix(query.Data, "select_renew:")
 		tempUserData[query.From.ID] = map[string]string{"username": username}
 		userStates[query.From.ID] = "renew_days"
-		sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("🔄 Renewing %s\n⏳ Masukkan Tambahan Durasi (hari):", username))
+		sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("🔄 *MENU RENEW*\nUser: `%s`\nMasukkan tambahan durasi (*Hari*):", username))
 	case strings.HasPrefix(query.Data, "select_delete:"):
 		username := strings.TrimPrefix(query.Data, "select_delete:")
-		msg := tgbotapi.NewMessage(query.Message.Chat.ID, fmt.Sprintf("❓ Yakin ingin menghapus user `%s`?", username))
+		msg := tgbotapi.NewMessage(query.Message.Chat.ID, fmt.Sprintf("❓ *KONFIRMASI HAPUS*\nAnda yakin ingin menghapus user `%s`?", username))
 		msg.ParseMode = "Markdown"
 		msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
@@ -174,14 +153,10 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 	text := strings.TrimSpace(msg.Text)
 
 	switch state {
-	case "create_trial_username": // BARU: Memproses input Trial
-		createTrialUser(bot, msg.Chat.ID, text, 30) 
-		resetState(userID)
-
 	case "create_username":
 		tempUserData[userID]["username"] = text
 		userStates[userID] = "create_days"
-		sendMessage(bot, msg.Chat.ID, "⏳ Masukkan Durasi (hari):")
+		sendMessage(bot, msg.Chat.ID, fmt.Sprintf("⏳ *CREATE USER*\nPassword: `%s`\nMasukkan **Durasi** (*Hari*) pembuatan:", text))
 
 	case "create_days":
 		days, err := strconv.Atoi(text)
@@ -198,7 +173,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 			sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
 			return
 		}
-		renewUser(bot, msg.ChatID, tempUserData[userID]["username"], days)
+		renewUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days)
 		resetState(userID)
 	}
 }
@@ -211,7 +186,8 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 	}
 
 	if len(users) == 0 {
-		sendMessage(bot, chatID, "📂 Tidak ada user.")
+		sendMessage(bot, chatID, "📂 Tidak ada user saat ini.")
+		showMainMenu(bot, chatID)
 		return
 	}
 
@@ -233,12 +209,11 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, u := range users[start:end] {
-		label := fmt.Sprintf("%s (%s)", u.Password, u.Status)
+		statusIcon := "🟢"
 		if u.Status == "Expired" {
-			label = fmt.Sprintf("🔴 %s", label)
-		} else {
-			label = fmt.Sprintf("🟢 %s", label)
+			statusIcon = "🔴"
 		}
+		label := fmt.Sprintf("%s %s (Kadaluarsa: %s)", statusIcon, u.Password, u.Expired)
 		data := fmt.Sprintf("select_%s:%s", action, u.Password)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label, data),
@@ -247,18 +222,27 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 
 	var navRow []tgbotapi.InlineKeyboardButton
 	if page > 1 {
-		navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("⬅️ Prev", fmt.Sprintf("page_%s:%d", action, page-1)))
+		navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("⬅️ Halaman Sebelumnya", fmt.Sprintf("page_%s:%d", action, page-1)))
 	}
 	if page < totalPages {
-		navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("Next ➡️", fmt.Sprintf("page_%s:%d", action, page+1)))
+		navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("Halaman Selanjutnya ➡️", fmt.Sprintf("page_%s:%d", action, page+1)))
 	}
 	if len(navRow) > 0 {
 		rows = append(rows, navRow)
 	}
 	
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")))
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali ke Menu Utama", "cancel")))
 
-	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("📋 Pilih User untuk %s (Halaman %d/%d):", strings.Title(action), page, totalPages))
+	title := ""
+	switch action {
+	case "delete":
+		title = "🗑️ HAPUS AKUN"
+	case "renew":
+		title = "🔄 PERPANJANG AKUN"
+	}
+
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("*%s*\nPilih user dari daftar di bawah (Halaman %d dari %d):", title, page, totalPages))
+	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	sendAndTrack(bot, msg)
 }
@@ -275,13 +259,12 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 	}
 
-	msgText := fmt.Sprintf("✨ *ZIVPN UDP - Bot Menu Utama* ✨\n\n"+
-		"--- *Server Info* ---\n"+
-		"🌐 **Domain:** `%s`\n"+
-		"🏙️ **Kota:** `%s`\n"+
-		"📡 **ISP:** `%s`\n"+
-		"----------------------\n\n"+
-		"Pilih aksi di bawah ini:",
+	msgText := fmt.Sprintf("✨ *Selamat Datang di ZIVPN UDP Bot*\n\n" +
+		"Server Info:\n" +
+		"•  🌐 *Domain*: `%s`\n" +
+		"•  📍 *Lokasi*: `%s`\n" +
+		"•  📡 *ISP*: `%s`\n\n" +
+		"Silakan pilih menu di bawah ini:",
 		domain, ipInfo.City, ipInfo.Isp)
 
 	msg := tgbotapi.NewMessage(chatID, msgText)
@@ -289,18 +272,15 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⏳ Trial 30 Menit", "menu_trial"), // TOMBOL BARU
+			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun Baru", "menu_create"),
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Perpanjang Akun", "menu_renew"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔑 Buat Akun", "menu_create"),
+			tgbotapi.NewInlineKeyboardButtonData("📋 Daftar Akun", "menu_list"),
 			tgbotapi.NewInlineKeyboardButtonData("🗑️ Hapus Akun", "menu_delete"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("♻️ Perpanjang Akun", "menu_renew"),
-			tgbotapi.NewInlineKeyboardButtonData("📋 Daftar Akun", "menu_list"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📈 Info Sistem", "menu_info"),
+			tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
 		),
 	)
 	msg.ReplyMarkup = keyboard
@@ -309,6 +289,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 
 func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "Markdown"
 	if _, inState := userStates[chatID]; inState {
 		cancelKb := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")),
@@ -404,46 +385,6 @@ func getUsers() ([]UserData, error) {
 	return users, nil
 }
 
-func createTrialUser(bot *tgbotapi.BotAPI, chatID int64, username string, minutes int) {
-	// ASUMSI: API memiliki endpoint khusus untuk trial yang menerima 'minutes'
-	res, err := apiCall("POST", "/user/create_trial", map[string]interface{}{
-		"password": username,
-		"minutes":  minutes, // Mengirim 30 menit
-	})
-
-	if err != nil {
-		sendMessage(bot, chatID, "❌ Error API: "+err.Error())
-		return
-	}
-
-	if res["success"] == true {
-		data := res["data"].(map[string]interface{})
-		
-		ipInfo, _ := getIpInfo() 
-		
-		msg := fmt.Sprintf("✅ *AKUN TRIAL 30 MENIT!*\n\n"+
-			"━━━━━━━━━━━━━━━━━━━━\n"+
-			"👤 **Password:** `%s`\n"+
-			"⌛ **Durasi:** `30 Menit`\n"+
-			"📅 **Expired:** `%s`\n"+
-			"━━━━━━━━━━━━━━━━━━━━\n"+
-			"🌐 **Domain:** `%s`\n"+
-			"🏙️ **City:** `%s`\n"+
-			"📡 **ISP:** `%s`\n"+
-			"━━━━━━━━━━━━━━━━━━━━",
-			data["password"], data["expired"], data["domain"], ipInfo.City, ipInfo.Isp)
-		
-		reply := tgbotapi.NewMessage(chatID, msg)
-		reply.ParseMode = "Markdown"
-		deleteLastMessage(bot, chatID)
-		bot.Send(reply)
-		showMainMenu(bot, chatID)
-	} else {
-		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", res["message"]))
-		showMainMenu(bot, chatID)
-	}
-}
-
 func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": username,
@@ -460,16 +401,15 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		
 		ipInfo, _ := getIpInfo() // Abaikan kesalahan, cukup tampilkan kosong jika gagal
 		
-		msg := fmt.Sprintf("✅ *AKUN BERHASIL DIBUAT!*\n\n"+
-			"━━━━━━━━━━━━━━━━━━━━\n"+
-			"👤 **Password:** `%s`\n"+
-			"📅 **Expired:** `%s`\n"+
-			"━━━━━━━━━━━━━━━━━━━━\n"+
-			"🌐 **Domain:** `%s`\n"+
-			"🏙️ **City:** `%s`\n"+
-			"📡 **ISP:** `%s`\n"+
-			"━━━━━━━━━━━━━━━━━━━━",
-			data["password"], data["expired"], data["domain"], ipInfo.City, ipInfo.Isp)
+		msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT*\n\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+			"🔑 *Password*: `%s`\n" +
+			"🌐 *Domain*: `%s`\n" +
+			"🗓️ *Kadaluarsa*: `%s`\n" +
+			"📍 *Lokasi Server*: `%s`\n" +
+			"📡 *ISP Server*: `%s`\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+			data["password"], data["domain"], data["expired"], ipInfo.City, ipInfo.Isp)
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -493,12 +433,13 @@ func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
 	}
 
 	if res["success"] == true {
-		msg := tgbotapi.NewMessage(chatID, "✅ Password berhasil dihapus.")
+		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ Password `%s` berhasil *DIHAPUS*.", username))
+		msg.ParseMode = "Markdown"
 		deleteLastMessage(bot, chatID)
 		bot.Send(msg)
 		showMainMenu(bot, chatID)
 	} else {
-		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", res["message"]))
+		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal menghapus: %s", res["message"]))
 		showMainMenu(bot, chatID)
 	}
 }
@@ -517,7 +458,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
 		
-		ipInfo, _ := getIpInfo() // Abaikan kesalahan, cukup tampilkan kosong jika gagal
+		ipInfo, _ := getIpInfo() // Abaikan kesalahan
 
 		domain := "Unknown"
 		if d, ok := data["domain"].(string); ok && d != "" {
@@ -532,16 +473,15 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 			}
 		}
 
-		msg := fmt.Sprintf("♻️ *AKUN BERHASIL DIPERPANJANG!*\n\n"+
-			"━━━━━━━━━━━━━━━━━━━━\n"+
-			"👤 **Password:** `%s`\n"+
-			"📅 **Expired:** `%s`\n"+
-			"━━━━━━━━━━━━━━━━━━━━\n"+
-			"🌐 **Domain:** `%s`\n"+
-			"🏙️ **City:** `%s`\n"+
-			"📡 **ISP:** `%s`\n"+
-			"━━━━━━━━━━━━━━━━━━━━",
-			data["password"], data["expired"], domain, ipInfo.City, ipInfo.Isp)
+		msg := fmt.Sprintf("✅ *AKUN BERHASIL DIPERPANJANG* (%d Hari)\n\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+			"🔑 *Password*: `%s`\n" +
+			"🌐 *Domain*: `%s`\n" +
+			"🗓️ *Kadaluarsa Baru*: `%s`\n" +
+			"📍 *Lokasi Server*: `%s`\n" +
+			"📡 *ISP Server*: `%s`\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+			days, data["password"], domain, data["expired"], ipInfo.City, ipInfo.Isp)
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -549,7 +489,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		bot.Send(reply)
 		showMainMenu(bot, chatID)
 	} else {
-		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", res["message"]))
+		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal memperpanjang: %s", res["message"]))
 		showMainMenu(bot, chatID)
 	}
 }
@@ -564,25 +504,26 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
 	if res["success"] == true {
 		users := res["data"].([]interface{})
 		if len(users) == 0 {
-			sendMessage(bot, chatID, "📂 Tidak ada user.")
+			sendMessage(bot, chatID, "📂 Tidak ada user saat ini.")
+			showMainMenu(bot, chatID)
 			return
 		}
 
-		msg := "📋 *List Passwords*\n"
-		for _, u := range users {
+		msg := fmt.Sprintf("📋 *DAFTAR AKUN ZIVPN* (Total: %d)\n\n", len(users))
+		for i, u := range users {
 			user := u.(map[string]interface{})
-			status := "🟢"
+			statusIcon := "🟢"
 			if user["status"] == "Expired" {
-				status = "🔴"
+				statusIcon = "🔴"
 			}
-			msg += fmt.Sprintf("\n%s `%s` (%s)", status, user["password"], user["expired"])
+			msg += fmt.Sprintf("%d. %s `%s`\n   _Kadaluarsa: %s_\n", i+1, statusIcon, user["password"], user["expired"])
 		}
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
 		sendAndTrack(bot, reply)
 	} else {
-		sendMessage(bot, chatID, "❌ Gagal mengambil data.")
+		sendMessage(bot, chatID, "❌ Gagal mengambil data daftar akun.")
 	}
 }
 
@@ -598,7 +539,15 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 		
 		ipInfo, _ := getIpInfo()
 
-		msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n           INFO ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nDomain         : %s\nIP Public      : %s\nPort           : %s\nService        : %s\nCITY           : %s\nISP            : %s\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n```",
+		msg := fmt.Sprintf("⚙️ *INFORMASI DETAIL SERVER*\n\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+			"🌐 *Domain*: `%s`\n" +
+			"🖥️ *IP Public*: `%s`\n" +
+			"🔌 *Port*: `%s`\n" +
+			"🔧 *Layanan*: `%s`\n" +
+			"📍 *Lokasi Server*: `%s`\n" +
+			"📡 *ISP Server*: `%s`\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
 			data["domain"], data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp)
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
@@ -607,7 +556,7 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 		bot.Send(reply)
 		showMainMenu(bot, chatID)
 	} else {
-		sendMessage(bot, chatID, "❌ Gagal mengambil info.")
+		sendMessage(bot, chatID, "❌ Gagal mengambil info sistem.")
 	}
 }
 
