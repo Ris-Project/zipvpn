@@ -406,6 +406,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
 			"🗓️ *Kadaluarsa*: `%s`\n" +
+			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━",
 			data["password"], data["domain"], data["expired"], ipInfo.City, ipInfo.Isp)
@@ -477,6 +478,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
 			"🗓️ *Kadaluarsa Baru*: `%s`\n" +
+			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━",
 			days, data["password"], domain, data["expired"], ipInfo.City, ipInfo.Isp)
