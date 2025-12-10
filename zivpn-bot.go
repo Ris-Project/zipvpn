@@ -267,7 +267,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         totalUsers = len(users)
     }
 
-	msgText := fmt.Sprintf("✨ *BOT PGETUNNEL ZIVPN UDP*\n\n" +
+	msgText := fmt.Sprintf("✨ *WELCOME TO BOT PGETUNNEL UDP ZIVPN*\n\n" +
 		"Server Info:\n" +
 		"•  🌐 *Domain*: `%s`\n" +
 		"•  📍 *Lokasi*: `%s`\n" +
