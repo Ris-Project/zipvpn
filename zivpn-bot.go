@@ -20,15 +20,15 @@ const (
 	// !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
 	MenuPhotoURL    = "https://h.uguu.se/ePURTlNf.jpg"
 	
-	// --- TAMBAHAN HARGA AKUN ---
+	// --- PENGATURAN HARGA DAN ADMIN ---
 	HARGA_30_HARI_IDR = 12000
-	HARGA_5000_IDR   = 5000 // <-- HARGA BARU
-	HARI_5000        = 12   // <-- HARI BARU
-	HARGA_8000_IDR   = 8000 // <-- HARGA BARU
-	HARI_8000        = 20   // <-- HARI BARU
+	HARGA_5000_IDR   = 5000 
+	HARI_5000        = 12   
+	HARGA_8000_IDR   = 8000 
+	HARI_8000        = 20   
 	
-	ADMIN_TELEGRAM_ID = "7545471466" 
-	QRIS_PHOTO_URL    = "https://o.uguu.se/WRYXatAe.png" 
+	ADMIN_TELEGRAM_ID = "@JesVpnt" 
+	QRIS_PHOTO_URL    = "https://o.uguu.se/WRYXatAe.png" // URL gambar QRIS
 )
 
 var ApiKey = "AutoFtBot-agskjgdvsbdreiWG1234512SDKrqw"
@@ -84,14 +84,13 @@ func main() {
 	}
 }
 
+// --- FUNGSI DIPERBAIKI: handleMessage ---
 func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
-	if msg.From.ID != adminID {
-		reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Anda bukan admin.")
-		sendAndTrack(bot, reply)
-		return
-	}
+	userID := msg.From.ID
+	is_admin := userID == adminID 
+	
+	state, exists := userStates[userID]
 
-	state, exists := userStates[msg.From.ID]
 	if exists {
 		handleState(bot, msg, state)
 		return
@@ -102,18 +101,40 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 		case "start":
 			showMainMenu(bot, msg.Chat.ID)
 		default:
-			msg := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal.")
-			sendAndTrack(bot, msg)
+			if !is_admin {
+				reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Anda bukan admin. Hanya perintah `/start` yang tersedia.")
+				sendAndTrack(bot, reply)
+			} else {
+				// Admin command not recognized
+				msg := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal.")
+				sendAndTrack(bot, msg)
+			}
 		}
-	}
+	} else if !is_admin {
+        // Non-admin memasukkan teks biasa dan tidak dalam state, abaikan agar bot tidak spam
+		return
+    }
 }
+// --- AKHIR handleMessage ---
 
+
+// --- FUNGSI DIPERBAIKI: handleCallback ---
 func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID int64) {
-	if query.From.ID != adminID {
-		bot.Request(tgbotapi.NewCallback(query.ID, "Akses Ditolak"))
+	is_admin := query.From.ID == adminID
+
+	// IZINKAN SEMUA PENGGUNA untuk menu_topup dan cancel
+	if !is_admin && query.Data != "menu_topup" && query.Data != "cancel" {
+		bot.Request(tgbotapi.NewCallback(query.ID, "Akses Ditolak. Hanya menu Top Up yang tersedia."))
 		return
 	}
 
+	// Blok akses admin-only jika pengguna bukan admin
+	if !is_admin && (strings.HasPrefix(query.Data, "menu_") && query.Data != "menu_topup") {
+		// Logika ini seharusnya sudah ter-cover oleh filter di atas, tapi untuk safety:
+		bot.Request(tgbotapi.NewCallback(query.ID, "Akses Ditolak"))
+		return
+	}
+	
 	switch {
 	case query.Data == "menu_create":
 		userStates[query.From.ID] = "create_username"
@@ -132,7 +153,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 		
 		msgText := fmt.Sprintf("💸 *MENU TOP UP MANUAL*\n\n" +
 			"Silakan lakukan pembayaran via QRIS di bawah. \n" +
-			"Setelah transfer, masukkan **nominal top up** (contoh: `12000`) untuk konfirmasi admin atau membuat akun 30 hari:")
+			"Setelah transfer, masukkan **nominal top up** (contoh: `12000`) untuk konfirmasi admin atau membuat akun otomatis:")
 		
 		deleteLastMessage(bot, query.Message.Chat.ID) 
 
@@ -182,11 +203,13 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 		username := strings.TrimPrefix(query.Data, "confirm_delete:")
 		deleteUser(bot, query.Message.Chat.ID, username)
 	case strings.HasPrefix(query.Data, "admin_confirm_topup:"):
+		// Hanya admin yang dapat menekan tombol ini
 		parts := strings.Split(query.Data, ":")
 		targetID, _ := strconv.ParseInt(parts[1], 10, 64)
 		nominal, _ := strconv.Atoi(parts[2])
 		confirmTopup(bot, query, targetID, nominal, true)
 	case strings.HasPrefix(query.Data, "admin_cancel_topup:"):
+		// Hanya admin yang dapat menekan tombol ini
 		parts := strings.Split(query.Data, ":")
 		targetID, _ := strconv.ParseInt(parts[1], 10, 64)
 		nominal, _ := strconv.Atoi(parts[2])
@@ -195,6 +218,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 
 	bot.Request(tgbotapi.NewCallback(query.ID, ""))
 }
+// --- AKHIR handleCallback ---
 
 func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 	userID := msg.From.ID
@@ -233,22 +257,22 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
         
         var autoDays int
         
-        // Cek nominal 12000 (30 hari)
+        // Cek nominal untuk auto-create
         if nominal == HARGA_30_HARI_IDR {
             autoDays = 30
-        } else if nominal == HARGA_5000_IDR { // <-- OPSI BARU
+        } else if nominal == HARGA_5000_IDR { 
             autoDays = HARI_5000 
-        } else if nominal == HARGA_8000_IDR { // <-- OPSI BARU
+        } else if nominal == HARGA_8000_IDR { 
             autoDays = HARI_8000
         }
         
         if autoDays > 0 {
-             // Lanjutkan ke state input password untuk auto-create
+             // Auto-create akun
              tempUserData[userID] = map[string]string{"nominal": text, "days": strconv.Itoa(autoDays)}
              userStates[userID] = "create_username_auto"
              sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Nominal **Rp %d** (%d Hari) diterima.\nMembuat akun.\nSilakan masukkan **PASSWORD** yang diinginkan:", nominal, autoDays))
         } else {
-            // Lanjutkan ke admin confirmation untuk nominal lain
+            // Nominal lain, lanjutkan ke admin confirmation
             notifyAdminTopup(bot, msg.From.ID, msg.From.UserName, nominal, msg.Chat.ID)
             sendMessage(bot, msg.ChatID, fmt.Sprintf("⏳ Permintaan Top Up **Rp %d** berhasil dikirim ke admin. Mohon tunggu konfirmasi.", nominal))
             resetState(userID)
@@ -685,9 +709,8 @@ func loadConfig() (BotConfig, error) {
 	return config, err
 }
 
-// --- Fungsi Baru untuk Topup Manual ---
+// --- Fungsi untuk Topup Manual ---
 
-// Mengirim notifikasi topup ke Admin
 func notifyAdminTopup(bot *tgbotapi.BotAPI, userID int64, username string, nominal int, chatID int64) {
 	config, err := loadConfig()
     if err != nil {
@@ -705,7 +728,7 @@ func notifyAdminTopup(bot *tgbotapi.BotAPI, userID int64, username string, nomin
 	
 	msg := tgbotapi.NewMessage(adminID, msgText)
 	msg.ParseMode = "Markdown"
-	msg.DisableWebPagePreview = true // Optional
+	msg.DisableWebPagePreview = true 
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -718,7 +741,6 @@ func notifyAdminTopup(bot *tgbotapi.BotAPI, userID int64, username string, nomin
 	bot.Send(msg)
 }
 
-// Menangani konfirmasi/pembatalan topup oleh Admin
 func confirmTopup(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, targetUserID int64, nominal int, success bool) {
 	editMsg := tgbotapi.NewEditMessageText(query.Message.Chat.ID, query.Message.MessageID, "")
 	editMsg.ParseMode = "Markdown"
