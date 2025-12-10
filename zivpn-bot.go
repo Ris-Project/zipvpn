@@ -215,7 +215,7 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 		if u.Status == "Expired" {
 			statusIcon = "🔴"
 		}
-		label := fmt.Sprintf("%s %s (Kadaluarsa: %s)", statusIcon, u.Password, u.Expired)
+		label := fmt.Sprintf("%s %s (Active: %s)", statusIcon, u.Password, u.Expired)
 		data := fmt.Sprintf("select_%s:%s", action, u.Password)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label, data),
@@ -546,7 +546,7 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
 			if user["status"] == "Expired" {
 				statusIcon = "🔴"
 			}
-			msg += fmt.Sprintf("%d. %s `%s`\n   _Active: %s_\n", i+1, statusIcon, user["password"], user["expired"])
+			msg += fmt.Sprintf("%d. %s `%s`\n   _Expired: %s_\n", i+1, statusIcon, user["password"], user["expired"])
 		}
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
