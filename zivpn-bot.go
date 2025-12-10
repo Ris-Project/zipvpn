@@ -259,7 +259,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 	}
 
-	msgText := fmt.Sprintf("✨ *Selamat Datang di ZIVPN UDP Bot*\n\n" +
+	msgText := fmt.Sprintf("✨ *BOT PGETUNNEL ZIVPN UDP*\n\n" +
 		"Server Info:\n" +
 		"•  🌐 *Domain*: `%s`\n" +
 		"•  📍 *Lokasi*: `%s`\n" +
@@ -272,8 +272,8 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun Baru", "menu_create"),
-			tgbotapi.NewInlineKeyboardButtonData("🔄 Perpanjang Akun", "menu_renew"),
+			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun", "menu_create"),
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📋 Daftar Akun", "menu_list"),
@@ -401,14 +401,13 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		
 		ipInfo, _ := getIpInfo() // Abaikan kesalahan, cukup tampilkan kosong jika gagal
 		
-		msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT*\n\n" +
-			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+		msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT*\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
 			"🗓️ *Kadaluarsa*: `%s`\n" +
-			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
-			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+			"━━━━━━━━━━━━━━━━━━━━━━━━━",
 			data["password"], data["domain"], data["expired"], ipInfo.City, ipInfo.Isp)
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
@@ -473,14 +472,13 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 			}
 		}
 
-		msg := fmt.Sprintf("✅ *AKUN BERHASIL DIPERPANJANG* (%d Hari)\n\n" +
-			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+		msg := fmt.Sprintf("✅ *AKUN BERHASIL DIPERPANJANG* (%d Hari)\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
 			"🗓️ *Kadaluarsa Baru*: `%s`\n" +
-			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
-			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+			"━━━━━━━━━━━━━━━━━━━━━━━━━",
 			days, data["password"], domain, data["expired"], ipInfo.City, ipInfo.Isp)
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
@@ -539,15 +537,15 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 		
 		ipInfo, _ := getIpInfo()
 
-		msg := fmt.Sprintf("⚙️ *INFORMASI DETAIL SERVER*\n\n" +
-			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+		msg := fmt.Sprintf("⚙️ *INFORMASI DETAIL SERVER*\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🌐 *Domain*: `%s`\n" +
 			"🖥️ *IP Public*: `%s`\n" +
 			"🔌 *Port*: `%s`\n" +
 			"🔧 *Layanan*: `%s`\n" +
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
-			"━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+			"━━━━━━━━━━━━━━━━━━━━━━━━━",
 			data["domain"], data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp)
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
