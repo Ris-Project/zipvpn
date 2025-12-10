@@ -17,6 +17,8 @@ const (
 	BotConfigFile = "/etc/zivpn/bot-config.json"
 	ApiUrl        = "http://127.0.0.1:8080/api"
 	ApiKeyFile    = "/etc/zivpn/apikey"
+	// !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
+	MenuPhotoURL    = "https://h.uguu.se/ePURTlNf.jpg" 
 )
 
 var ApiKey = "AutoFtBot-agskjgdvsbdreiWG1234512SDKrqw"
@@ -266,10 +268,11 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		"•  📡 *ISP*: `%s`\n\n" +
 		"Silakan pilih menu di bawah ini:",
 		domain, ipInfo.City, ipInfo.Isp)
+    
+	// Hapus pesan terakhir sebelum mengirim menu baru
+    deleteLastMessage(bot, chatID) 
 
-	msg := tgbotapi.NewMessage(chatID, msgText)
-	msg.ParseMode = "Markdown"
-
+    // Buat keyboard inline
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun", "menu_create"),
@@ -283,8 +286,27 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 			tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
 		),
 	)
-	msg.ReplyMarkup = keyboard
-	sendAndTrack(bot, msg)
+
+    // Buat pesan foto dari URL
+	photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FileURL(MenuPhotoURL))
+	photoMsg.Caption = msgText
+	photoMsg.ParseMode = "Markdown"
+	photoMsg.ReplyMarkup = keyboard
+	
+    // Kirim foto
+	sentMsg, err := bot.Send(photoMsg)
+	if err == nil {
+        // Track ID pesan yang baru dikirim (foto)
+		lastMessageIDs[chatID] = sentMsg.MessageID
+	} else {
+        // Fallback jika pengiriman foto gagal (misal: URL salah/tidak ada)
+        log.Printf("Gagal mengirim foto menu dari URL (%s): %v. Mengirim sebagai teks biasa.", MenuPhotoURL, err)
+        
+        textMsg := tgbotapi.NewMessage(chatID, msgText)
+        textMsg.ParseMode = "Markdown"
+        textMsg.ReplyMarkup = keyboard
+        sendAndTrack(bot, textMsg)
+	}
 }
 
 func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
