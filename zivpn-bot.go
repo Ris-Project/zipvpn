@@ -82,6 +82,19 @@ func main() {
 }
 
 func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
+	// --- PERBAIKAN: LOGIKA DIAGNOSIS ADMIN ID ---
+	// Jika AdminID belum diatur (0) dan user mencoba /start, tampilkan ID-nya
+	if adminID == 0 && msg.IsCommand() && msg.Command() == "start" {
+        msgText := fmt.Sprintf("ID Telegram Anda: `%d`.\n\n" + 
+                               "Mohon masukkan ID ini ke file konfigurasi (`%s`) sebagai `admin_id` agar bot dapat bekerja.", 
+                               msg.From.ID, BotConfigFile)
+        reply := tgbotapi.NewMessage(msg.Chat.ID, msgText)
+        reply.ParseMode = "Markdown"
+        bot.Send(reply)
+        return
+	}
+    // --- AKHIR PERBAIKAN ---
+
 	if msg.From.ID != adminID {
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Anda bukan admin.")
 		sendAndTrack(bot, reply)
@@ -105,8 +118,9 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 	}
 }
 
-// Fungsi BARU: handlePhoto
+// Fungsi handlePhoto: Menangani bukti transfer berupa gambar
 func handlePhoto(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
+	// Abaikan pesan foto jika pengirim bukan admin
 	if msg.From.ID != adminID {
 		// Jika bukan admin, cek apakah sedang dalam state menunggu bukti
 		state, exists := userStates[msg.From.ID]
@@ -115,17 +129,17 @@ func handlePhoto(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 			userID := msg.From.ID
 			nominal := tempUserData[userID]["nominal"]
 			
-			// Ambil foto kualitas terbaik (indeks terakhir)
+			// Ambil foto kualitas terbaik
 			photo := (*msg.Photo)[len(*msg.Photo)-1]
 			
-			// Buat caption untuk admin
+			// Buat caption notifikasi untuk admin
 			adminCaption := fmt.Sprintf("⚠️ *NOTIFIKASI TOP UP BARU (BUKTI GAMBAR)*\n\n" +
-				"👤 *User ID (Admin)*: `%d`\n" + // Asumsi user yang berinteraksi adalah admin
+				"👤 *User ID (Admin)*: `%d`\n" +
 				"💵 *Nominal*: `%s`\n" +
 				"🧾 *Keterangan*: Bukti gambar terlampir.\n\n" +
 				"Mohon segera dicek dan diproses.", userID, nominal)
 
-			// Kirim foto sebagai notifikasi ke admin (menggunakan chatID user/admin)
+            // Kirim foto sebagai notifikasi ke chat yang sama (Chat ID Admin)
             adminNotification := tgbotapi.NewPhoto(msg.Chat.ID, tgbotapi.FileID(photo.FileID))
             adminNotification.Caption = adminCaption
             adminNotification.ParseMode = "Markdown"
@@ -140,13 +154,12 @@ func handlePhoto(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 			return
 		}
 
-		// Jika bukan admin dan tidak dalam state topup
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak atau bukan waktu yang tepat untuk mengirim gambar.")
 		sendAndTrack(bot, reply)
 		return
 	}
 	
-	// Abaikan foto dari admin jika tidak dalam state khusus
+	// Jika Admin mengirim foto di luar state topup, berikan pesan default
 	reply := tgbotapi.NewMessage(msg.Chat.ID, "Admin, saya tidak memproses foto Anda saat ini.")
 	sendAndTrack(bot, reply)
 }
@@ -236,7 +249,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 		}
 		renewUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days)
 		resetState(userID)
-	// state topup_photo_proof tidak ditangani di sini karena menunggu PHOTO, bukan TEXT
+	// state topup_photo_proof ditangani di handlePhoto karena menunggu gambar, bukan teks
 	}
 }
 
@@ -328,7 +341,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         totalUsers = len(users)
     }
 
-    // --- LOGIC SALDO USER (BARU) ---
+    // --- LOGIC SALDO USER ---
     var adminAccountExpired string
     var adminAccountStatus string
 
@@ -404,7 +417,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	}
 }
 
-// Fungsi showTopUpMenu yang dimodifikasi (memilih nominal)
+// Fungsi showTopUpMenu (memilih nominal)
 func showTopUpMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	// Hapus pesan terakhir sebelum mengirim menu baru
     deleteLastMessage(bot, chatID) 
@@ -432,7 +445,7 @@ func showTopUpMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	sendAndTrack(bot, msg)
 }
 
-// Fungsi BARU: showTopUpNominal (dipanggil setelah memilih nominal)
+// Fungsi showTopUpNominal (dipanggil setelah memilih nominal)
 func showTopUpNominal(bot *tgbotapi.BotAPI, chatID int64, userID int64, nominal string) {
     // Hapus pesan terakhir sebelum mengirim pesan baru
     deleteLastMessage(bot, chatID) 
@@ -458,7 +471,7 @@ func showTopUpNominal(bot *tgbotapi.BotAPI, chatID int64, userID int64, nominal 
 	photoMsg.ParseMode = "Markdown"
 	photoMsg.ReplyMarkup = keyboard
 
-	// Atur State di SINI: Menunggu foto/gambar bukti
+	// Atur State: Menunggu foto/gambar bukti
 	userStates[userID] = "topup_photo_proof" 
 	tempUserData[userID] = map[string]string{"nominal": nominal}
 
