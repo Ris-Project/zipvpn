@@ -72,14 +72,30 @@ func main() {
 	}
 }
 
+// ⬇️ FUNGSI INI TELAH DIPERBAIKI ⬇️
 func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
-	if msg.From.ID != adminID {
+	userID := msg.From.ID
+    
+	// 1. Tangani perintah /start untuk semua pengguna
+    if msg.IsCommand() && msg.Command() == "start" {
+        if userID == adminID {
+            showMainMenu(bot, msg.Chat.ID)
+        } else {
+            reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Bot ini dikhususkan untuk Administrator.")
+            sendAndTrack(bot, reply)
+        }
+        return // Hentikan di sini setelah menangani /start
+    }
+    
+    // 2. Pemeriksaan Admin ketat untuk SEMUA fungsi lainnya (state, perintah lain)
+    if userID != adminID {
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Anda bukan admin.")
 		sendAndTrack(bot, reply)
-		return
+		return // Hentikan jika bukan admin
 	}
 
-	state, exists := userStates[msg.From.ID]
+	// Hanya admin yang bisa melanjutkan ke state handling atau perintah lain
+	state, exists := userStates[userID]
 	if exists {
 		handleState(bot, msg, state)
 		return
@@ -87,14 +103,14 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 
 	if msg.IsCommand() {
 		switch msg.Command() {
-		case "start":
-			showMainMenu(bot, msg.Chat.ID)
+		// Perintah /start sudah ditangani di atas
 		default:
 			msg := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal.")
 			sendAndTrack(bot, msg)
 		}
 	}
 }
+// ⬆️ AKHIR DARI FUNGSI YANG DIPERBAIKI ⬆️
 
 func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID int64) {
 	if query.From.ID != adminID {
