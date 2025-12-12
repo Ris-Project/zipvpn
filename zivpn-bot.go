@@ -125,12 +125,30 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 	}
 
 	switch {
-	case query.Data == "menu_trial": // Handler untuk Trial
+	case query.Data == "menu_trial": // Handler untuk Trial 30 Menit
 		createTrialUser(bot, query.Message.Chat.ID)
-	case query.Data == "menu_create":
+
+	case query.Data == "menu_create_dynamic": // Handler untuk Buat Akun (Dynamic)
 		userStates[query.From.ID] = "create_username"
 		tempUserData[query.From.ID] = make(map[string]string)
-		sendMessage(bot, query.Message.Chat.ID, "🔑 *MENU CREATE*\nSilakan masukkan **PASSWORD** yang diinginkan:")
+		sendMessage(bot, query.Message.Chat.ID, "🔑 *MENU CREATE (Dynamic 1 IP)*\nSilakan masukkan **PASSWORD** yang diinginkan:")
+
+	case strings.HasPrefix(query.Data, "fixed_create:"): // Handler untuk Buat Akun (Fixed 2 IP)
+		// Format: fixed_create:DAYS_MAXIP (e.g., fixed_create:15_2)
+		parts := strings.Split(strings.TrimPrefix(query.Data, "fixed_create:"), "_")
+		if len(parts) == 2 {
+			days, maxIP := parts[0], parts[1]
+			
+			// Simpan durasi dan max_ip di tempUserData
+			tempUserData[query.From.ID] = map[string]string{
+				"days": days,
+				"max_ip": maxIP,
+			}
+			userStates[query.From.ID] = "fixed_create_username"
+			
+			sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("🔑 *CREATE %s HARI (%s IP)*\nSilakan masukkan **PASSWORD** yang diinginkan:", days, maxIP))
+		}
+
 	case query.Data == "menu_delete":
 		showUserSelection(bot, query.Message.Chat.ID, 1, "delete")
 	case query.Data == "menu_renew":
@@ -177,18 +195,28 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 	text := strings.TrimSpace(msg.Text)
 
 	switch state {
-	case "create_username":
+	case "create_username": // Flow Dynamic (1 IP default)
 		tempUserData[userID]["username"] = text
 		userStates[userID] = "create_days"
-		sendMessage(bot, msg.Chat.ID, fmt.Sprintf("⏳ *CREATE USER*\nPassword: `%s`\nMasukkan **Durasi** (*Hari*) pembuatan:", text))
+		sendMessage(bot, msg.Chat.ID, fmt.Sprintf("⏳ *CREATE USER (1 IP)*\nPassword: `%s`\nMasukkan **Durasi** (*Hari*) pembuatan:", text))
 
-	case "create_days":
+	case "create_days": // Flow Dynamic (1 IP default)
 		days, err := strconv.Atoi(text)
 		if err != nil {
 			sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
 			return
 		}
-		createUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days)
+		// Memanggil fungsi createUser (default: 1 IP)
+		createUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days) 
+		resetState(userID)
+
+	case "fixed_create_username": // Flow Fixed IP (2 IP)
+		username := text
+		days, _ := strconv.Atoi(tempUserData[userID]["days"])
+		maxIP, _ := strconv.Atoi(tempUserData[userID]["max_ip"])
+
+		// Memanggil fungsi baru untuk fixed IP
+		createUserWithMaxIP(bot, msg.Chat.ID, username, days, maxIP) 
 		resetState(userID)
 
 	case "renew_days":
@@ -321,14 +349,27 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 
 	// Buat keyboard inline
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		// Row 1: Trial & Dynamic Create
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun", "menu_create"),
-			tgbotapi.NewInlineKeyboardButtonData("🚀 Trial 1 Hari", "menu_trial"), // Perubahan teks tombol
+			tgbotapi.NewInlineKeyboardButtonData("🚀 Trial 30 Menit", "menu_trial"),
+			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun (Dynamic 1 IP)", "menu_create_dynamic"),
 		),
+		// Row 2: Fixed 2 IP Options (15 & 30 Hari)
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("15 Hari (2 IP)", "fixed_create:15_2"),
+			tgbotapi.NewInlineKeyboardButtonData("30 Hari (2 IP)", "fixed_create:30_2"),
+		),
+		// Row 3: Fixed 2 IP Options (60 & 90 Hari)
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("60 Hari (2 IP)", "fixed_create:60_2"),
+			tgbotapi.NewInlineKeyboardButtonData("90 Hari (2 IP)", "fixed_create:90_2"),
+		),
+		// Row 4: Management
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
 			tgbotapi.NewInlineKeyboardButtonData("🗑️ Hapus Akun", "menu_delete"),
 		),
+		// Row 5: Info
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📋 Daftar Akun", "menu_list"),
 			tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
@@ -538,10 +579,12 @@ func getNearExpiredUsers() ([]UserData, error) {
 	return nearExpired, nil
 }
 
+// Fungsi untuk membuat user dengan durasi dinamis (default: 1 IP)
 func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": username,
 		"days":     days,
+		// max_ip dihilangkan, API diasumsikan default ke 1
 	})
 
 	if err != nil {
@@ -554,7 +597,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 
 		ipInfo, _ := getIpInfo()
 
-		msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT*\n" +
+		msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT (1 IP)*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
@@ -579,15 +622,72 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	}
 }
 
-// FUNGSI INI SUDAH DIUBAH KE DURASI 1 HARI (24 JAM)
+// FUNGSI BARU: Membuat user dengan batasan IP tetap (2 IP)
+func createUserWithMaxIP(bot *tgbotapi.BotAPI, chatID int64, password string, days int, maxIP int) {
+	res, err := apiCall("POST", "/user/create", map[string]interface{}{
+		"password": password,
+		"days":     days,
+		"max_ip":   maxIP, // Parameter baru
+	})
+
+	if err != nil {
+		sendMessage(bot, chatID, "❌ Error API: "+err.Error())
+		return
+	}
+
+	if res["success"] == true {
+		data := res["data"].(map[string]interface{})
+
+		ipInfo, _ := getIpInfo()
+
+		// Fallback untuk memastikan Domain terisi
+		domain := "Unknown"
+		if d, ok := data["domain"].(string); ok && d != "" {
+			domain = d
+		} else {
+			if infoRes, err := apiCall("GET", "/info", nil); err == nil && infoRes["success"] == true {
+				if infoData, ok := infoRes["data"].(map[string]interface{}); ok {
+					if d, ok := infoData["domain"].(string); ok {
+						domain = d
+					}
+				}
+			}
+		}
+
+		msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT (%d IP)*\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+			"🔑 *Password*: `%s`\n" +
+			"🌐 *Domain*: `%s`\n" +
+			"🗓️ *Kadaluarsa*: `%s`\n" +
+			"📍 *Lokasi Server*: `%s`\n" +
+			"📡 *ISP Server*: `%s`\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━",
+			maxIP, password, domain, data["expired"], ipInfo.City, ipInfo.Isp)
+
+		reply := tgbotapi.NewMessage(chatID, msg)
+		reply.ParseMode = "Markdown"
+		deleteLastMessage(bot, chatID)
+		bot.Send(reply)
+		showMainMenu(bot, chatID)
+	} else {
+		errMsg, ok := res["message"].(string)
+		if !ok {
+			errMsg = "Pesan error tidak diketahui dari API."
+		}
+		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", errMsg))
+		showMainMenu(bot, chatID)
+	}
+}
+
+// FUNGSI INI DIUBAH KEMBALI KE DURASI 30 MENIT
 func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 	trialPassword := generateRandomPassword(8)
 
-	// Perubahan: Menggunakan "days": 1 dan "minutes": 0 untuk durasi 1 hari
+	// Perubahan: Menggunakan "minutes": 30
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": trialPassword,
-		"minutes":  0, 
-		"days":     1, // Trial 1 hari
+		"minutes":  30, 
+		"days":     0,
 	})
 
 	if err != nil {
@@ -633,16 +733,16 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 		// --- END EKSTRAKSI DATA ---
 
 		// 3. Susun dan Kirim Pesan Sukses
-		msg := fmt.Sprintf("🚀 *TRIAL 1 HARI BERHASIL DIBUAT*\n" +
+		msg := fmt.Sprintf("🚀 *TRIAL 30 MENIT BERHASIL DIBUAT*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
-			"⏳ *Durasi*: `1 Hari`\n" + // Perubahan di sini
+			"⏳ *Durasi*: `30 Menit`\n" +
 			"🗓️ *Kadaluarsa*: `%s`\n" +
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-			"❗️ *PERHATIAN: Trial ini hanya berlaku 1 hari!*", // Perubahan di sini
+			"❗️ *PERHATIAN: Trial ini hanya berlaku 30 menit!*",
 			password, domain, expired, ipInfo.City, ipInfo.Isp)
 
 		reply := tgbotapi.NewMessage(chatID, msg)
