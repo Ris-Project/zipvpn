@@ -570,37 +570,59 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		bot.Send(reply)
 		showMainMenu(bot, chatID)
 	} else {
-		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", res["message"]))
+		errMsg, ok := res["message"].(string)
+		if !ok {
+			errMsg = "Pesan error tidak diketahui dari API."
+		}
+		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", errMsg))
 		showMainMenu(bot, chatID)
 	}
 }
 
-// Fungsi yang sudah diperbaiki untuk menangani detail Trial
+// FUNGSI INI SUDAH DIPERBAIKI (ROBUST)
 func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 	trialPassword := generateRandomPassword(8)
 
+	// 1. Panggil API untuk membuat user trial (30 menit)
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": trialPassword,
-		"minutes":  30,
+		"minutes":  30, // Durasi 30 menit
 		"days":     0,
 	})
 
 	if err != nil {
-		sendMessage(bot, chatID, "❌ Error API: "+err.Error())
+		sendMessage(bot, chatID, "❌ Error Komunikasi API: "+err.Error())
 		return
 	}
 
+	// 2. Cek apakah API merespons sukses
 	if res["success"] == true {
-		data := res["data"].(map[string]interface{})
+		data, ok := res["data"].(map[string]interface{})
+		if !ok {
+			sendMessage(bot, chatID, "❌ Gagal: Format data respons dari API tidak valid.")
+			showMainMenu(bot, chatID)
+			return
+		}
 
+		// --- EKSTRAKSI DATA DENGAN PENGECEKAN TIPE (ROBUST) ---
 		ipInfo, _ := getIpInfo()
 
-		// --- LOGIKA PERBAIKAN UNTUK MENDAPATKAN DOMAIN ---
+		password := "N/A"
+		if p, ok := data["password"].(string); ok {
+			password = p
+		}
+
+		expired := "N/A"
+		if e, ok := data["expired"].(string); ok {
+			expired = e
+		}
+
+		// Ambil Domain (Prioritas 1: dari respons create)
 		domain := "Unknown"
 		if d, ok := data["domain"].(string); ok && d != "" {
 			domain = d
 		} else {
-			// Fallback: Panggil /info API untuk memastikan domain didapatkan
+			// Prioritas 2: Fallback dengan memanggil /info API
 			if infoRes, err := apiCall("GET", "/info", nil); err == nil && infoRes["success"] == true {
 				if infoData, ok := infoRes["data"].(map[string]interface{}); ok {
 					if d, ok := infoData["domain"].(string); ok {
@@ -609,13 +631,9 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 				}
 			}
 		}
-		// ------------------------------------------------
+		// --- END EKSTRAKSI DATA ---
 
-		expired := "N/A"
-		if e, ok := data["expired"].(string); ok {
-			expired = e
-		}
-
+		// 3. Susun dan Kirim Pesan Sukses
 		msg := fmt.Sprintf("🚀 *TRIAL 30 MENIT BERHASIL DIBUAT*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
@@ -626,7 +644,7 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"❗️ *PERHATIAN: Trial ini hanya berlaku 30 menit!*",
-			data["password"], domain, expired, ipInfo.City, ipInfo.Isp)
+			password, domain, expired, ipInfo.City, ipInfo.Isp)
 
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -634,7 +652,12 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 		bot.Send(reply)
 		showMainMenu(bot, chatID)
 	} else {
-		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal membuat Trial: %s", res["message"]))
+		// 4. Penanganan Kegagalan API
+		errMsg, ok := res["message"].(string)
+		if !ok {
+			errMsg = "Respon kegagalan dari API tidak diketahui."
+		}
+		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal membuat Trial: %s", errMsg))
 		showMainMenu(bot, chatID)
 	}
 }
@@ -656,7 +679,11 @@ func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
 		bot.Send(msg)
 		showMainMenu(bot, chatID)
 	} else {
-		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal menghapus: %s", res["message"]))
+		errMsg, ok := res["message"].(string)
+		if !ok {
+			errMsg = "Pesan error tidak diketahui dari API."
+		}
+		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal menghapus: %s", errMsg))
 		showMainMenu(bot, chatID)
 	}
 }
@@ -706,7 +733,11 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		bot.Send(reply)
 		showMainMenu(bot, chatID)
 	} else {
-		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal memperpanjang: %s", res["message"]))
+		errMsg, ok := res["message"].(string)
+		if !ok {
+			errMsg = "Pesan error tidak diketahui dari API."
+		}
+		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal memperpanjang: %s", errMsg))
 		showMainMenu(bot, chatID)
 	}
 }
