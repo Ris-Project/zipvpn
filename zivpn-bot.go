@@ -17,8 +17,8 @@ import (
 
 const (
 	BotConfigFile = "/etc/zivpn/bot-config.json"
-	ApiUrl        = "http://127.0.0.1:8080/api"
-	ApiKeyFile    = "/etc/zivpn/apikey"
+	ApiUrl        = "http://127.0.0.1:8080/api"
+	ApiKeyFile    = "/etc/zivpn/apikey"
 	// !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
 	MenuPhotoURL = "https://h.uguu.se/ePURTlNf.jpg"
 
@@ -30,18 +30,18 @@ var ApiKey = "AutoFtBot-agskjgdvsbdreiWG1234512SDKrqw"
 
 type BotConfig struct {
 	BotToken string `json:"bot_token"`
-	AdminID  int64  `json:"admin_id"`
+	AdminID  int64  `json:"admin_id"`
 }
 
 type IpInfo struct {
 	City string `json:"city"`
-	Isp  string `json:"isp"`
+	Isp  string `json:"isp"`
 }
 
 type UserData struct {
 	Password string `json:"password"`
-	Expired  string `json:"expired"`
-	Status   string `json:"status"`
+	Expired  string `json:"expired"`
+	Status   string `json:"status"`
 }
 
 var userStates = make(map[int64]string)
@@ -125,7 +125,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 	}
 
 	switch {
-	case query.Data == "menu_trial_1": 
+	case query.Data == "menu_trial_1": 
 		createGenericTrialUser(bot, query.Message.Chat.ID, 1) // Trial 1 Hari
 	case query.Data == "menu_trial_15":
 		createGenericTrialUser(bot, query.Message.Chat.ID, 15) // Trial 15 Hari
@@ -138,8 +138,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 	case query.Data == "menu_create":
 		userStates[query.From.ID] = "create_username"
 		tempUserData[query.From.ID] = make(map[string]string)
-		// Pesan diubah untuk meminta password (yang juga akan menjadi username)
-		sendMessage(bot, query.Message.Chat.ID, "🔑 *MENU CREATE*\nSilakan masukkan **PASSWORD** (yang juga akan menjadi Username) yang diinginkan:")
+		sendMessage(bot, query.Message.Chat.ID, "🔑 *MENU CREATE*\nSilakan masukkan **PASSWORD** yang diinginkan:")
 	case query.Data == "menu_delete":
 		showUserSelection(bot, query.Message.Chat.ID, 1, "delete")
 	case query.Data == "menu_renew":
@@ -188,23 +187,8 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 	switch state {
 	case "create_username":
 		tempUserData[userID]["username"] = text
-		userStates[userID] = "create_max_login" // <-- STATE BARU: Minta Max Login
-		sendMessage(bot, msg.Chat.ID, fmt.Sprintf("👤 *CREATE USER*\nPassword: `%s`\nMasukkan **Max Login** (Angka, cth: 1, 2, atau 3):", text))
-
-	case "create_max_login": // <-- PENANGANAN STATE BARU
-		maxLogin, err := strconv.Atoi(text)
-		if err != nil {
-			sendMessage(bot, msg.Chat.ID, "❌ Max Login harus angka. Coba lagi:")
-			return
-		}
-		if maxLogin <= 0 {
-			sendMessage(bot, msg.Chat.ID, "❌ Max Login harus lebih dari 0. Coba lagi:")
-			return
-		}
-
-		tempUserData[userID]["max_login"] = strconv.Itoa(maxLogin) // Simpan dalam tempUserData
 		userStates[userID] = "create_days"
-		sendMessage(bot, msg.Chat.ID, fmt.Sprintf("⏳ *CREATE USER*\nPassword: `%s`\nMax Login: `%d`\nMasukkan **Durasi** (*Hari*) pembuatan:", tempUserData[userID]["username"], maxLogin))
+		sendMessage(bot, msg.Chat.ID, fmt.Sprintf("⏳ *CREATE USER*\nPassword: `%s`\nMasukkan **Durasi** (*Hari*) pembuatan:", text))
 
 	case "create_days":
 		days, err := strconv.Atoi(text)
@@ -212,17 +196,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 			sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
 			return
 		}
-		if days <= 0 {
-			sendMessage(bot, msg.Chat.ID, "❌ Durasi harus lebih dari 0. Coba lagi:")
-			return
-		}
-
-		// Ambil Max Login dari tempUserData dan konversi ke int
-		maxLoginStr := tempUserData[userID]["max_login"]
-		maxLogin, _ := strconv.Atoi(maxLoginStr) 
-
-		// Panggil createUser dengan parameter maxLogin
-		createUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days, maxLogin)
+		createUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days)
 		resetState(userID)
 
 	case "renew_days":
@@ -333,17 +307,17 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 				expiredText += "... dan user lainnya\n"
 				break
 			}
-			expiredText += fmt.Sprintf("•  `%s` (Expired: %s)\n", u.Password, u.Expired)
+			expiredText += fmt.Sprintf("•  `%s` (Expired: %s)\n", u.Password, u.Expired)
 		}
 	}
 	// ----------------------------------------------------
 
 	msgText := fmt.Sprintf("✨ *WELCOME TO BOT PGETUNNEL UDP ZIVPN*\n\n" +
 		"Server Info:\n" +
-		"•  🌐 *Domain*: `%s`\n" +
-		"•  📍 *Lokasi*: `%s`\n" +
-		"•  📡 *ISP*: `%s`\n" +
-		"•  👤 *Total Akun*: `%d`\n\n" +
+		"•  🌐 *Domain*: `%s`\n" +
+		"•  📍 *Lokasi*: `%s`\n" +
+		"•  📡 *ISP*: `%s`\n" +
+		"•  👤 *Total Akun*: `%d`\n\n" +
 		"Untuk bantuan, hubungi Admin: @JesVpnt\n\n" +
 		"Silakan pilih menu di bawah ini:",
 		domain, ipInfo.City, ipInfo.Isp, totalUsers)
@@ -365,7 +339,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("✨ Buat 60 Hari 24k", "menu_trial_60"),
-			tgbotapi.NewInlineKeyboardButtonData("🔥 Buat 90 Hari 36k", "menu_trial_90"),
+			tgbotapi.NewInlineKeyboardButtonData("🔥 Buat 90 Hari 35k", "menu_trial_90"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
@@ -580,12 +554,10 @@ func getNearExpiredUsers() ([]UserData, error) {
 	return nearExpired, nil
 }
 
-// Tanda tangan fungsi diubah untuk menerima maxLogin
-func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, maxLogin int) {
+func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
-		"password": 	username,
-		"days":    		days,
-		"max_login": 	maxLogin, // <-- PARAMETER BARU
+		"password": username,
+		"days":     days,
 	})
 
 	if err != nil {
@@ -598,35 +570,18 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, m
 
 		ipInfo, _ := getIpInfo()
 
-		// Ambil Domain (Prioritas 1: dari respons create)
-		domain := "Unknown"
-		if d, ok := data["domain"].(string); ok && d != "" {
-			domain = d
-		} else {
-			// Prioritas 2: Fallback dengan memanggil /info API
-			if infoRes, err := apiCall("GET", "/info", nil); err == nil && infoRes["success"] == true {
-				if infoData, ok := infoRes["data"].(map[string]interface{}); ok {
-					if d, ok := infoData["domain"].(string); ok {
-						domain = d
-					}
-				}
-			}
-		}
-
-		// Tambahkan 'Max Login' di pesan sukses
 		msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
-			"⏳ *Max Login*: `%d`\n" + // <-- TAMPILKAN MAX LOGIN
 			"🗓️ *Kadaluarsa*: `%s`\n" +
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
-			"━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-         "🔒 *Private Tidak Digunakan User Lain*\n"+
-      	"⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
-      	"━━━━━━━━━━━━━━━━━━━━━━━━━━", // <-- Perbaikan: Koma yang salah dihilangkan
-			data["password"], domain, maxLogin, data["expired"], ipInfo.City, ipInfo.Isp) // <-- GUNAKAN MAX LOGIN
+			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+         "🔒 *Private Tidak Digunakan User Lain*\n"+
+      	"⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
+			"━━━━━━━━━━━━━━━━━━━━━━━━━",
+			data["password"], data["domain"], data["expired"], ipInfo.City, ipInfo.Isp)
 
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -646,15 +601,11 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, m
 // Fungsi umum untuk membuat akun trial dengan durasi hari yang ditentukan
 func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
 	trialPassword := generateRandomPassword(8)
-	
-	// Default Max Login untuk trial adalah 2
-	defaultMaxLogin := 2 
 
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": trialPassword,
-		"minutes":  0, 
-		"days":     days,
-		"max_login": defaultMaxLogin, // <-- Gunakan default Max Login untuk Trial
+		"minutes":  0, 
+		"days":     days, 
 	})
 
 	if err != nil {
@@ -704,16 +655,16 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
-			"⏳ *Max Login*: `%d hp`\n" + // <-- Max Login ditambahkan di sini
+			"⏳ *Max login*: `2 hp`\n" + 
 			"🗓️ *Kadaluarsa*: `%s`\n" +
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-	      "🔒 *Private Tidak Digunakan User Lain*\n"+
-      	"⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
-      	"❗️ *Akun ini aktif selama %d hari.*\n"+
-      	"━━━━━━━━━━━━━━━━━━━━━━━━━━",
-			days, password, domain, defaultMaxLogin, expired, ipInfo.City, ipInfo.Isp, days)
+	      "🔒 *Private Tidak Digunakan User Lain*\n"+
+      	"⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
+      	"❗️ *Akun ini aktif selama %d hari.*\n"+
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+			days, password, domain, days, expired, ipInfo.City, ipInfo.Isp, days)
 
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -730,6 +681,8 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
 		showMainMenu(bot, chatID)
 	}
 }
+
+// FUNGSI createTrialUser YANG LAMA DIHAPUS/DIUBAH KE createGenericTrialUser(..., 1)
 
 
 func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
@@ -761,7 +714,7 @@ func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
 func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	res, err := apiCall("POST", "/user/renew", map[string]interface{}{
 		"password": username,
-		"days":     days,
+		"days":     days,
 	})
 
 	if err != nil {
@@ -834,7 +787,7 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
 			if user["status"] == "Expired" {
 				statusIcon = "🔴"
 			}
-			msg += fmt.Sprintf("%d. %s `%s`\n    _Kadaluarsa: %s_\n", i+1, statusIcon, user["password"], user["expired"])
+			msg += fmt.Sprintf("%d. %s `%s`\n    _Kadaluarsa: %s_\n", i+1, statusIcon, user["password"], user["expired"])
 		}
 
 		reply := tgbotapi.NewMessage(chatID, msg)
