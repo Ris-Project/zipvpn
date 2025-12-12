@@ -125,21 +125,20 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 	}
 
 	switch {
-	// Tetap memanggil fungsi createGenericTrialUser, namun label di menu sudah diubah
 	case query.Data == "menu_trial_1": 
-		createGenericTrialUser(bot, query.Message.Chat.ID, 1) // Buat 1 Hari
+		createGenericTrialUser(bot, query.Message.Chat.ID, 1) // Trial 1 Hari
 	case query.Data == "menu_trial_15":
-		createGenericTrialUser(bot, query.Message.Chat.ID, 15) // Buat 15 Hari
+		createGenericTrialUser(bot, query.Message.Chat.ID, 15) // Trial 15 Hari
 	case query.Data == "menu_trial_30":
-		createGenericTrialUser(bot, query.Message.Chat.ID, 30) // Buat 30 Hari
+		createGenericTrialUser(bot, query.Message.Chat.ID, 30) // Trial 30 Hari
 	case query.Data == "menu_trial_60":
-		createGenericTrialUser(bot, query.Message.Chat.ID, 60) // Buat 60 Hari
+		createGenericTrialUser(bot, query.Message.Chat.ID, 60) // Trial 60 Hari
 	case query.Data == "menu_trial_90":
-		createGenericTrialUser(bot, query.Message.Chat.ID, 90) // Buat 90 Hari
+		createGenericTrialUser(bot, query.Message.Chat.ID, 90) // Trial 90 Hari
 	case query.Data == "menu_create":
 		userStates[query.From.ID] = "create_username"
 		tempUserData[query.From.ID] = make(map[string]string)
-		sendMessage(bot, query.Message.Chat.ID, "🔑 *MENU CREATE CUSTOM*\nSilakan masukkan **PASSWORD** yang diinginkan:")
+		sendMessage(bot, query.Message.Chat.ID, "🔑 *MENU CREATE*\nSilakan masukkan **PASSWORD** yang diinginkan:")
 	case query.Data == "menu_delete":
 		showUserSelection(bot, query.Message.Chat.ID, 1, "delete")
 	case query.Data == "menu_renew":
@@ -189,7 +188,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 	case "create_username":
 		tempUserData[userID]["username"] = text
 		userStates[userID] = "create_days"
-		sendMessage(bot, msg.Chat.ID, fmt.Sprintf("⏳ *CREATE USER CUSTOM*\nPassword: `%s`\nMasukkan **Durasi** (*Hari*) pembuatan:", text))
+		sendMessage(bot, msg.Chat.ID, fmt.Sprintf("⏳ *CREATE USER*\nPassword: `%s`\nMasukkan **Durasi** (*Hari*) pembuatan:", text))
 
 	case "create_days":
 		days, err := strconv.Atoi(text)
@@ -281,8 +280,16 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 }
 
 func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
-	ipInfo, _ := getIpInfo()
+	ipInfo, errIp := getIpInfo() // Panggil getIpInfo()
 	domain := "Unknown"
+	
+	// PENINGKATAN ROBUSTNESS: Handle error getIpInfo
+	city := "Unknown Location"
+	isp := "Unknown ISP"
+	if errIp == nil {
+		city = ipInfo.City
+		isp = ipInfo.Isp
+	}
 
 	if res, err := apiCall("GET", "/info", nil); err == nil && res["success"] == true {
 		if data, ok := res["data"].(map[string]interface{}); ok {
@@ -316,12 +323,12 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	msgText := fmt.Sprintf("✨ *WELCOME TO BOT PGETUNNEL UDP ZIVPN*\n\n" +
 		"Server Info:\n" +
 		"•  🌐 *Domain*: `%s`\n" +
-		"•  📍 *Lokasi*: `%s`\n" +
-		"•  📡 *ISP*: `%s`\n" +
+		"•  📍 *Lokasi*: `%s`\n" + // Menggunakan variabel city
+		"•  📡 *ISP*: `%s`\n" + 	// Menggunakan variabel isp
 		"•  👤 *Total Akun*: `%d`\n\n" +
 		"Untuk bantuan, hubungi Admin: @JesVpnt\n\n" +
 		"Silakan pilih menu di bawah ini:",
-		domain, ipInfo.City, ipInfo.Isp, totalUsers)
+		domain, city, isp, totalUsers)
 
 	msgText += expiredText
 
@@ -329,11 +336,10 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	deleteLastMessage(bot, chatID)
 
 	// Buat keyboard inline
-	// LABEL TOMBOL TRIAL DIUBAH MENJADI BUAT
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun Custom", "menu_create"),
-			tgbotapi.NewInlineKeyboardButtonData("🚀 Buat 1 Hari", "menu_trial_1"),
+			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun", "menu_create"),
+			tgbotapi.NewInlineKeyboardButtonData("🚀 Trial 1 Hari", "menu_trial_1"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⭐ Buat 15 Hari", "menu_trial_15"),
@@ -408,29 +414,26 @@ func sendAndTrack(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig) {
 	}
 }
 
-// Fungsi untuk men-generate string acak dengan prefix "viip_" dan diikuti angka
-func generateRandomPassword(length int) string {
-	const prefix = "viip_"
-	// Charset hanya berisi angka
-	const numericCharset = "0123456789"
-
-	// Hitung panjang bagian acak yang diperlukan
-	randomLength := length - len(prefix)
-
-	// Pastikan randomLength positif
-	if randomLength <= 0 {
-		return prefix
-	}
-
+// FUNGSI LAMA: diganti namanya untuk menghindari penggunaan di trial
+func generateLegacyRandomPassword(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	seededRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-	b := make([]byte, randomLength)
+	b := make([]byte, length)
 	for i := range b {
-		// Gunakan hanya karakter angka
-		b[i] = numericCharset[seededRand.Intn(len(numericCharset))]
+		b[i] = charset[seededRand.Intn(len(charset))]
 	}
-	
-	// Gabungkan prefix dengan bagian angka acak
-	return prefix + string(b)
+	return string(b)
+}
+
+// FUNGSI BARU: Untuk membuat kata sandi format "viip" diikuti angka
+func generateViipPassword(digitLength int) string {
+	// Pindahkan seed ke main() atau gunakan math/rand global
+	const charset = "0123456789"
+	b := make([]byte, digitLength)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+	return "viip" + string(b)
 }
 
 // Fungsi Background Worker untuk menghapus akun expired secara otomatis
@@ -584,7 +587,14 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
 
-		ipInfo, _ := getIpInfo()
+		ipInfo, errIp := getIpInfo()
+		
+		city := "Unknown Location"
+		isp := "Unknown ISP"
+		if errIp == nil {
+			city = ipInfo.City
+			isp = ipInfo.Isp
+		}
 
 		msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
@@ -594,7 +604,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━",
-			data["password"], data["domain"], data["expired"], ipInfo.City, ipInfo.Isp)
+			data["password"], data["domain"], data["expired"], city, isp)
 
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -611,15 +621,15 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	}
 }
 
-// Fungsi umum untuk membuat akun dengan password otomatis dan durasi hari yang ditentukan
+// Fungsi umum untuk membuat akun trial dengan durasi hari yang ditentukan
 func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
-	// Panjang 8 akan menghasilkan "viip_XXX"
-	autoPassword := generateRandomPassword(8) 
+	// PERBAIKAN: Menggunakan fungsi password viip
+	trialPassword := generateViipPassword(4) // Menghasilkan password 'viipXXXX'
 
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
-		"password": autoPassword,
-		"minutes":  0, 
-		"days":     days, 
+		"password": trialPassword,
+		"minutes": 0,
+		"days":    days,
 	})
 
 	if err != nil {
@@ -636,7 +646,15 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
 		}
 
 		// --- EKSTRAKSI DATA DENGAN PENGECEKAN TIPE (ROBUST) ---
-		ipInfo, _ := getIpInfo()
+		ipInfo, errIp := getIpInfo() // Panggil getIpInfo()
+
+		// PENINGKATAN ROBUSTNESS: Handle error getIpInfo
+		city := "Unknown Location"
+		isp := "Unknown ISP"
+		if errIp == nil {
+			city = ipInfo.City
+			isp = ipInfo.Isp
+		}
 
 		password := "N/A"
 		if p, ok := data["password"].(string); ok {
@@ -664,8 +682,8 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
 		}
 		// --- END EKSTRAKSI DATA ---
 
-		// 3. Susun dan Kirim Pesan Sukses (Menghilangkan kata 'Trial')
-		msg := fmt.Sprintf("✅ *AKUN %d HARI BERHASIL DIBUAT*\n" +
+		// 3. Susun dan Kirim Pesan Sukses
+		msg := fmt.Sprintf("🚀 *BUAT %d HARI BERHASIL DIBUAT*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
@@ -673,8 +691,9 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
 			"🗓️ *Kadaluarsa*: `%s`\n" +
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
-			"━━━━━━━━━━━━━━━━━━━━━━━━━",
-			days, password, domain, days, expired, ipInfo.City, ipInfo.Isp)
+			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+			"❗️ *PERHATIAN: Akun ini hanya berlaku %d hari!*",
+			days, password, domain, days, expired, city, isp, days) // Menggunakan city dan isp yang sudah di-handle error-nya
 
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -687,11 +706,10 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
 		if !ok {
 			errMsg = "Respon kegagalan dari API tidak diketahui."
 		}
-		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal membuat Akun: %s", errMsg))
+		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal membuat Buat: %s", errMsg))
 		showMainMenu(bot, chatID)
 	}
 }
-
 
 func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
 	res, err := apiCall("POST", "/user/delete", map[string]interface{}{
@@ -733,7 +751,14 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
 
-		ipInfo, _ := getIpInfo()
+		ipInfo, errIp := getIpInfo()
+
+		city := "Unknown Location"
+		isp := "Unknown ISP"
+		if errIp == nil {
+			city = ipInfo.City
+			isp = ipInfo.Isp
+		}
 
 		domain := "Unknown"
 		if d, ok := data["domain"].(string); ok && d != "" {
@@ -756,7 +781,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━",
-			days, data["password"], domain, data["expired"], ipInfo.City, ipInfo.Isp)
+			days, data["password"], domain, data["expired"], city, isp)
 
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -816,7 +841,14 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
 
-		ipInfo, _ := getIpInfo()
+		ipInfo, errIp := getIpInfo()
+
+		city := "Unknown Location"
+		isp := "Unknown ISP"
+		if errIp == nil {
+			city = ipInfo.City
+			isp = ipInfo.Isp
+		}
 
 		msg := fmt.Sprintf("⚙️ *INFORMASI DETAIL SERVER*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
@@ -827,7 +859,7 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━",
-			data["domain"], data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp)
+			data["domain"], data["public_ip"], data["port"], data["service"], city, isp)
 
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
