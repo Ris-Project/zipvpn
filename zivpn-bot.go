@@ -130,7 +130,9 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 		createTrialUser(bot, query.Message.Chat.ID)
 	case query.Data == "menu_viip30": // Handler untuk VIIP 30 Hari
 		createViip30DaysRandomUser(bot, query.Message.Chat.ID)
-	case query.Data == "menu_viip90": // Handler untuk VIIP 90 Hari (DITAMBAHKAN)
+	case query.Data == "menu_viip60": // Handler untuk VIIP 60 Hari
+		createViip60DaysRandomUser(bot, query.Message.Chat.ID)
+	case query.Data == "menu_viip90": // Handler untuk VIIP 90 Hari
 		createViip90DaysRandomUser(bot, query.Message.Chat.ID)
 	case query.Data == "menu_create":
 		userStates[query.From.ID] = "create_username"
@@ -337,7 +339,10 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("👑 VIIP 30 Hari", "menu_viip30"),
-			tgbotapi.NewInlineKeyboardButtonData("⭐ VIIP 90 Hari", "menu_viip90"), // Tombol baru VIIP 90 Hari (DITAMBAHKAN)
+			tgbotapi.NewInlineKeyboardButtonData("👑 VIIP 60 Hari", "menu_viip60"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⭐ VIIP 90 Hari", "menu_viip90"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
@@ -677,7 +682,7 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 	}
 }
 
-// FUNGSI UNTUK VIIP 30 HARI
+// FUNGSI UNTUK VIIP 30 HARI (DI-UPDATE agar robust)
 func createViip30DaysRandomUser(bot *tgbotapi.BotAPI, chatID int64) {
 	viipPassword := generateRandomPassword(8) // Generate password acak 8 karakter
 	const viipDays = 30 // Durasi VIIP: 30 Hari
@@ -700,6 +705,7 @@ func createViip30DaysRandomUser(bot *tgbotapi.BotAPI, chatID int64) {
 			return
 		}
 
+		// --- EKSTRAKSI DATA DENGAN PENGECEKAN TIPE (ROBUST) ---
 		ipInfo, _ := getIpInfo()
 
 		password := "N/A"
@@ -726,6 +732,8 @@ func createViip30DaysRandomUser(bot *tgbotapi.BotAPI, chatID int64) {
 				}
 			}
 		}
+		// --- END EKSTRAKSI DATA ---
+
 
 		// Susun dan Kirim Pesan Sukses
 		msg := fmt.Sprintf("👑 *AKUN VIIP 30 HARI BERHASIL DIBUAT*\n" +
@@ -755,14 +763,14 @@ func createViip30DaysRandomUser(bot *tgbotapi.BotAPI, chatID int64) {
 	}
 }
 
-// FUNGSI BARU UNTUK VIIP 90 HARI
-func createViip90DaysRandomUser(bot *tgbotapi.BotAPI, chatID int64) {
+// FUNGSI UNTUK VIIP 60 HARI (DI-UPDATE agar robust)
+func createViip60DaysRandomUser(bot *tgbotapi.BotAPI, chatID int64) {
 	viipPassword := generateRandomPassword(8) // Generate password acak 8 karakter
-	const viipDays = 90 // Durasi VIIP: 90 Hari
+	const viipDays = 60 // Durasi VIIP: 60 Hari
 
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": viipPassword,
-		"days":     viipDays, // 90 Hari
+		"days":     viipDays, // 60 Hari
 	})
 
 	if err != nil {
@@ -778,6 +786,7 @@ func createViip90DaysRandomUser(bot *tgbotapi.BotAPI, chatID int64) {
 			return
 		}
 
+		// --- EKSTRAKSI DATA DENGAN PENGECEKAN TIPE (ROBUST) ---
 		ipInfo, _ := getIpInfo()
 
 		password := "N/A"
@@ -804,6 +813,87 @@ func createViip90DaysRandomUser(bot *tgbotapi.BotAPI, chatID int64) {
 				}
 			}
 		}
+		// --- END EKSTRAKSI DATA ---
+
+		// Susun dan Kirim Pesan Sukses
+		msg := fmt.Sprintf("👑 *AKUN VIIP 60 HARI BERHASIL DIBUAT*\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+			"🔑 *Password*: `%s`\n" +
+			"🌐 *Domain*: `%s`\n" +
+			"⏳ *Durasi*: `%d Hari`\n" +
+			"🗓️ *Kadaluarsa*: `%s`\n" +
+			"📍 *Lokasi Server*: `%s`\n" +
+			"📡 *ISP Server*: `%s`\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━",
+			password, domain, viipDays, expired, ipInfo.City, ipInfo.Isp)
+
+		reply := tgbotapi.NewMessage(chatID, msg)
+		reply.ParseMode = "Markdown"
+		deleteLastMessage(bot, chatID)
+		bot.Send(reply)
+		showMainMenu(bot, chatID)
+	} else {
+		// Penanganan Kegagalan API
+		errMsg, ok := res["message"].(string)
+		if !ok {
+			errMsg = "Respon kegagalan dari API tidak diketahui."
+		}
+		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal membuat Akun VIIP: %s", errMsg))
+		showMainMenu(bot, chatID)
+	}
+}
+
+// FUNGSI UNTUK VIIP 90 HARI (DI-UPDATE agar robust)
+func createViip90DaysRandomUser(bot *tgbotapi.BotAPI, chatID int64) {
+	viipPassword := generateRandomPassword(8) // Generate password acak 8 karakter
+	const viipDays = 90 // Durasi VIIP: 90 Hari
+
+	res, err := apiCall("POST", "/user/create", map[string]interface{}{
+		"password": viipPassword,
+		"days":     viipDays, // 90 Hari
+	})
+
+	if err != nil {
+		sendMessage(bot, chatID, "❌ Error Komunikasi API: "+err.Error())
+		return
+	}
+
+	if res["success"] == true {
+		data, ok := res["data"].(map[string]interface{})
+		if !ok {
+			sendMessage(bot, chatID, "❌ Gagal: Format data respons dari API tidak valid.")
+			showMainMenu(bot, chatID)
+			return
+		}
+
+		// --- EKSTRAKSI DATA DENGAN PENGECEKAN TIPE (ROBUST) ---
+		ipInfo, _ := getIpInfo()
+
+		password := "N/A"
+		if p, ok := data["password"].(string); ok {
+			password = p
+		}
+
+		expired := "N/A"
+		if e, ok := data["expired"].(string); ok {
+			expired = e
+		}
+
+		// Ambil Domain (Prioritas 1: dari respons create)
+		domain := "Unknown"
+		if d, ok := data["domain"].(string); ok && d != "" {
+			domain = d
+		} else {
+			// Prioritas 2: Fallback dengan memanggil /info API
+			if infoRes, err := apiCall("GET", "/info", nil); err == nil && infoRes["success"] == true {
+				if infoData, ok := infoRes["data"].(map[string]interface{}); ok {
+					if d, ok := infoData["domain"].(string); ok {
+						domain = d
+					}
+				}
+			}
+		}
+		// --- END EKSTRAKSI DATA ---
 
 		// Susun dan Kirim Pesan Sukses
 		msg := fmt.Sprintf("⭐ *AKUN VIIP 90 HARI BERHASIL DIBUAT*\n" +
