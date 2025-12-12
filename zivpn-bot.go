@@ -323,7 +323,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun", "menu_create"),
-			tgbotapi.NewInlineKeyboardButtonData("🚀 Trial 30 Menit", "menu_trial"),
+			tgbotapi.NewInlineKeyboardButtonData("🚀 Trial 1 Hari", "menu_trial"), // Perubahan teks tombol
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
@@ -579,15 +579,15 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	}
 }
 
-// FUNGSI INI SUDAH DIPERBAIKI (ROBUST)
+// FUNGSI INI SUDAH DIUBAH KE DURASI 1 HARI (24 JAM)
 func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 	trialPassword := generateRandomPassword(8)
 
-	// 1. Panggil API untuk membuat user trial (30 menit)
+	// Perubahan: Menggunakan "days": 1 dan "minutes": 0 untuk durasi 1 hari
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": trialPassword,
-		"minutes":  30, // Durasi 30 menit
-		"days":     0,
+		"minutes":  0, 
+		"days":     1, // Trial 1 hari
 	})
 
 	if err != nil {
@@ -595,7 +595,6 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 		return
 	}
 
-	// 2. Cek apakah API merespons sukses
 	if res["success"] == true {
 		data, ok := res["data"].(map[string]interface{})
 		if !ok {
@@ -634,16 +633,16 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 		// --- END EKSTRAKSI DATA ---
 
 		// 3. Susun dan Kirim Pesan Sukses
-		msg := fmt.Sprintf("🚀 *TRIAL 30 MENIT BERHASIL DIBUAT*\n" +
+		msg := fmt.Sprintf("🚀 *TRIAL 1 HARI BERHASIL DIBUAT*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
-			"⏳ *Durasi*: `30 Menit`\n" +
+			"⏳ *Durasi*: `1 Hari`\n" + // Perubahan di sini
 			"🗓️ *Kadaluarsa*: `%s`\n" +
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-			"❗️ *PERHATIAN: Trial ini hanya berlaku 30 menit!*",
+			"❗️ *PERHATIAN: Trial ini hanya berlaku 1 hari!*", // Perubahan di sini
 			password, domain, expired, ipInfo.City, ipInfo.Isp)
 
 		reply := tgbotapi.NewMessage(chatID, msg)
