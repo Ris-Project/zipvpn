@@ -651,7 +651,7 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
 		// --- END EKSTRAKSI DATA ---
 
 		// 3. Susun dan Kirim Pesan Sukses
-		msg := fmt.Sprintf("🚀 *BUAT %d HARI BERHASIL DIBUAT*\n" +
+		msg := fmt.Sprintf("🚀 *AKUN %d HARI BERHASIL DIBUAT*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
