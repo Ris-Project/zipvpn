@@ -570,14 +570,18 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 
 		ipInfo, _ := getIpInfo()
 
-		msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT*\n" +
-			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-			"🔑 *Password*: `%s`\n" +
-			"🌐 *Domain*: `%s`\n" +
-			"🗓️ *Kadaluarsa*: `%s`\n" +
-			"📍 *Lokasi Server*: `%s`\n" +
-			"📡 *ISP Server*: `%s`\n" +
-			"━━━━━━━━━━━━━━━━━━━━━━━━━",
+		msg := fmt.Sprintf(
+	"🎉 *AKUN PRIVATE BERHASIL DIBUAT*\n"+
+	"━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
+	"🔑 *Password*: `%s`\n"
+	"🌐 *Domain*: `%s`\n"+
+	"🗓️ *Kadaluarsa*: `%s`\n"+
+	"📍 *Lokasi Server*: `%s`\n"+
+	"📡 *ISP Server*: `%s`\n"+
+	"━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
+	"🔒 *Private Tidak Digunakan User Lain*\n"+
+	"⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
+	"━━━━━━━━━━━━━━━━━━━━━━━━━",
 			data["password"], data["domain"], data["expired"], ipInfo.City, ipInfo.Isp)
 
 		reply := tgbotapi.NewMessage(chatID, msg)
@@ -648,6 +652,7 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
 		// --- END EKSTRAKSI DATA ---
 
 		// 3. Susun dan Kirim Pesan Sukses
+		// Urutan placeholder: %d (days), %s (password), %s (domain), %s (expired), %s (city), %s (isp), %d (days)
 		msg := fmt.Sprintf("🚀 *BUAT %d HARI BERHASIL DIBUAT*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
@@ -661,7 +666,7 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
       	"⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
       	"❗️ *Akun ini aktif selama %d hari.*\n"+
         "━━━━━━━━━━━━━━━━━━━━━━━━━━",
-			days, password, domain, days, expired, ipInfo.City, ipInfo.Isp, days)
+			days, password, domain, expired, ipInfo.City, ipInfo.Isp, days) // Urutan variabel disesuaikan dengan placeholder
 
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
