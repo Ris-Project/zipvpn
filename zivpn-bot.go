@@ -20,7 +20,7 @@ const (
 	ApiUrl        = "http://127.0.0.1:8080/api"
 	ApiKeyFile    = "/etc/zivpn/apikey"
 	// !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
-	MenuPhotoURL = "https://h.uguu.se/ePURTlNf.jpg"
+	MenuPhotoURL = "https://h.uguu.se/NgaOrSxG.png"
 
 	// Interval untuk pengecekan dan penghapusan akun expired (diubah menjadi 1 menit)
 	AutoDeleteInterval = 1 * time.Minute
