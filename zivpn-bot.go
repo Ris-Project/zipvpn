@@ -647,23 +647,22 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
 		}
 		// --- END EKSTRAKSI DATA ---
 
-		//// 3. Susun dan Kirim Pesan Sukses
-msg := fmt.Sprintf(
-	"🚀 *AKUN %d HARI BERHASIL DIBUAT*\n"+
-	"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-	"🔑 *Password*: `%s`\n"+
-	"🌐 *Domain*: `%s`\n"+
-	"⏳ *Durasi*: `%d Hari`\n"+
-	"🗓️ *Kadaluarsa*: `%s`\n"+
-	"📍 *Lokasi Server*: `%s`\n"+
-	"📡 *ISP Server*: `%s`\n"+
-	"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-	"🔒 *Private Tidak Digunakan User Lain*\n"+
-	"⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
-	"❗️ *Akun ini aktif selama %d hari.*\n"+
-   "━━━━━━━━━━━━━━━━━━━━━━━━━━",
-	durasi, password, domain, durasi, expDate, lokasiServer, ispServer, durasi,
-)
+		// 3. Susun dan Kirim Pesan Sukses
+		msg := fmt.Sprintf("🚀 *BUAT %d HARI BERHASIL DIBUAT*\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+			"🔑 *Password*: `%s`\n" +
+			"🌐 *Domain*: `%s`\n" +
+			"⏳ *Durasi*: `%d Hari`\n" + 
+			"🗓️ *Kadaluarsa*: `%s`\n" +
+			"📍 *Lokasi Server*: `%s`\n" +
+			"📡 *ISP Server*: `%s`\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+	      "🔒 *Private Tidak Digunakan User Lain*\n"+
+      	"⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
+      	"❗️ *Akun ini aktif selama %d hari.*\n"+
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+			days, password, domain, days, expired, ipInfo.City, ipInfo.Isp, days)
+
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
 		deleteLastMessage(bot, chatID)
