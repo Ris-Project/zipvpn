@@ -125,8 +125,16 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 	}
 
 	switch {
-	case query.Data == "menu_trial": // Handler untuk Trial
-		createTrialUser(bot, query.Message.Chat.ID)
+	case query.Data == "menu_trial_1": 
+		createGenericTrialUser(bot, query.Message.Chat.ID, 1) // Trial 1 Hari
+	case query.Data == "menu_trial_15":
+		createGenericTrialUser(bot, query.Message.Chat.ID, 15) // Trial 15 Hari
+	case query.Data == "menu_trial_30":
+		createGenericTrialUser(bot, query.Message.Chat.ID, 30) // Trial 30 Hari
+	case query.Data == "menu_trial_60":
+		createGenericTrialUser(bot, query.Message.Chat.ID, 60) // Trial 60 Hari
+	case query.Data == "menu_trial_90":
+		createGenericTrialUser(bot, query.Message.Chat.ID, 90) // Trial 90 Hari
 	case query.Data == "menu_create":
 		userStates[query.From.ID] = "create_username"
 		tempUserData[query.From.ID] = make(map[string]string)
@@ -323,7 +331,15 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun", "menu_create"),
-			tgbotapi.NewInlineKeyboardButtonData("🚀 Trial 1 Hari", "menu_trial"), // Perubahan teks tombol
+			tgbotapi.NewInlineKeyboardButtonData("🚀 Trial 1 Hari", "menu_trial_1"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⭐ Trial 15 Hari", "menu_trial_15"),
+			tgbotapi.NewInlineKeyboardButtonData("🌟 Trial 30 Hari", "menu_trial_30"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✨ Trial 60 Hari", "menu_trial_60"),
+			tgbotapi.NewInlineKeyboardButtonData("🔥 Trial 90 Hari", "menu_trial_90"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
@@ -579,15 +595,14 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	}
 }
 
-// FUNGSI INI SUDAH DIUBAH KE DURASI 1 HARI (24 JAM)
-func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
+// Fungsi umum untuk membuat akun trial dengan durasi hari yang ditentukan
+func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
 	trialPassword := generateRandomPassword(8)
 
-	// Perubahan: Menggunakan "days": 1 dan "minutes": 0 untuk durasi 1 hari
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": trialPassword,
 		"minutes":  0, 
-		"days":     1, // Trial 1 hari
+		"days":     days, 
 	})
 
 	if err != nil {
@@ -633,17 +648,17 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 		// --- END EKSTRAKSI DATA ---
 
 		// 3. Susun dan Kirim Pesan Sukses
-		msg := fmt.Sprintf("🚀 *TRIAL 1 HARI BERHASIL DIBUAT*\n" +
+		msg := fmt.Sprintf("🚀 *TRIAL %d HARI BERHASIL DIBUAT*\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
 			"🔑 *Password*: `%s`\n" +
 			"🌐 *Domain*: `%s`\n" +
-			"⏳ *Durasi*: `1 Hari`\n" + // Perubahan di sini
+			"⏳ *Durasi*: `%d Hari`\n" + 
 			"🗓️ *Kadaluarsa*: `%s`\n" +
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-			"❗️ *PERHATIAN: Trial ini hanya berlaku 1 hari!*", // Perubahan di sini
-			password, domain, expired, ipInfo.City, ipInfo.Isp)
+			"❗️ *PERHATIAN: Trial ini hanya berlaku %d hari!*",
+			days, password, domain, days, expired, ipInfo.City, ipInfo.Isp, days)
 
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -660,6 +675,9 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 		showMainMenu(bot, chatID)
 	}
 }
+
+// FUNGSI createTrialUser YANG LAMA DIHAPUS/DIUBAH KE createGenericTrialUser(..., 1)
+
 
 func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
 	res, err := apiCall("POST", "/user/delete", map[string]interface{}{
