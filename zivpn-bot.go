@@ -334,12 +334,12 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 			tgbotapi.NewInlineKeyboardButtonData("🚀 Trial 1 Hari", "menu_trial_1"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⭐ Buat 15 Hari", "menu_trial_15"),
-			tgbotapi.NewInlineKeyboardButtonData("🌟 Buat 30 Hari", "menu_trial_30"),
+			tgbotapi.NewInlineKeyboardButtonData("⭐ Buat 15 Hari 6k", "menu_trial_15"),
+			tgbotapi.NewInlineKeyboardButtonData("🌟 Buat 30 Hari 12k", "menu_trial_30"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✨ Buat 60 Hari", "menu_trial_60"),
-			tgbotapi.NewInlineKeyboardButtonData("🔥 Buat 90 Hari", "menu_trial_90"),
+			tgbotapi.NewInlineKeyboardButtonData("✨ Buat 60 Hari 24k", "menu_trial_60"),
+			tgbotapi.NewInlineKeyboardButtonData("🔥 Buat 90 Hari 35k", "menu_trial_90"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
@@ -577,6 +577,9 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 			"🗓️ *Kadaluarsa*: `%s`\n" +
 			"📍 *Lokasi Server*: `%s`\n" +
 			"📡 *ISP Server*: `%s`\n" +
+			"━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+	      "🔒 *Private Tidak Digunakan User Lain*\n"+
+      	"⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
 			"━━━━━━━━━━━━━━━━━━━━━━━━━",
 			data["password"], data["domain"], data["expired"], ipInfo.City, ipInfo.Isp)
 
