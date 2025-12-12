@@ -625,7 +625,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, m
 			"━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
          "🔒 *Private Tidak Digunakan User Lain*\n"+
       	"⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
-      	"━━━━━━━━━━━━━━━━━━━━━━━━━━",",
+      	"━━━━━━━━━━━━━━━━━━━━━━━━━━", // <-- Perbaikan: Koma yang salah dihilangkan
 			data["password"], domain, maxLogin, data["expired"], ipInfo.City, ipInfo.Isp) // <-- GUNAKAN MAX LOGIN
 
 		reply := tgbotapi.NewMessage(chatID, msg)
