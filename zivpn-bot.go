@@ -22,7 +22,7 @@ const (
 	// !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
 	MenuPhotoURL    = "https://h.uguu.se/ePURTlNf.jpg"
 	
-	// Interval untuk pengecekan dan penghapusan akun expired (diubah menjadi 1 menit)
+	// Interval untuk pengecekan dan penghapusan akun expired (diatur 1 menit)
 	AutoDeleteInterval = 1 * time.Minute
 )
 
@@ -189,7 +189,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 			sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
 			return
 		}
-		createUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days)
+		createUser(bot, msg.ChatID, tempUserData[userID]["username"], days)
 		resetState(userID)
 
 	case "renew_days":
@@ -198,7 +198,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 			sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
 			return
 		}
-		renewUser(bot, msg.Chat.ID, tempUserData[userID]["username"], days)
+		renewUser(bot, msg.ChatID, tempUserData[userID]["username"], days)
 		resetState(userID)
 	}
 }
@@ -576,9 +576,12 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	}
 }
 
+// FUNGSI INI TELAH DIPERBAIKI (FIXED) UNTUK MENANGANI PENGIRIMAN PESAN YANG GAGAL
 func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
+	// 1. Generate Password Acak
 	trialPassword := generateRandomPassword(8) 
 
+    // 2. Panggil API
     res, err := apiCall("POST", "/user/create", map[string]interface{}{
         "password": trialPassword,
         "minutes":  30, 
@@ -609,8 +612,27 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
-		deleteLastMessage(bot, chatID)
-		bot.Send(reply)
+		
+		// 3. Hapus pesan lama dan kirim pesan Trial dengan pelacakan ID pesan
+        deleteLastMessage(bot, chatID)
+        
+		sentMsg, err := bot.Send(reply)
+        
+		if err == nil {
+            // Sukses: Lacak ID pesan yang baru
+            lastMessageIDs[chatID] = sentMsg.MessageID
+		} else {
+            // Gagal mengirim pesan detail Trial ke user
+            log.Printf("❌ Gagal mengirim pesan detail Trial ke chat %d: %v", chatID, err)
+            
+            // Kirim pesan fallback sederhana jika pengiriman detail gagal
+            fallbackMsg := tgbotapi.NewMessage(chatID, 
+                fmt.Sprintf("✅ Akun Trial *%s* berhasil dibuat, tetapi gagal mengirim detail lengkap. Cek log atau coba /start lagi.", data["password"]),
+            )
+            // Coba kirim pesan fallback, tapi tidak perlu dilacak
+            bot.Send(fallbackMsg)
+		}
+
 		showMainMenu(bot, chatID)
 	} else {
 		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal membuat Trial: %s", res["message"]))
