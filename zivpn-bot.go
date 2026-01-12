@@ -48,7 +48,9 @@ type IpInfo struct {
     Isp  string `json:"isp"`
 }
 
+// Struct User Data (Disesuaikan dengan format JSON yang diinginkan)
 type UserData struct {
+    Host     string `json:"host"`
     Password string `json:"password"`
     Expired  string `json:"expired"`
     Status   string `json:"status"`
@@ -91,7 +93,7 @@ func main() {
         }
     }()
 
-    // --- BACKGROUND WORKER (AUTO BACKUP) ---
+    // --- BACKGROUND WORKER (AUTO BACKUP KE SERVER) ---
     go func() {
         performAutoBackup(bot, config.AdminID)
         ticker := time.NewTicker(AutoBackupInterval)
@@ -122,6 +124,20 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
     }
 
     state, exists := userStates[msg.From.ID]
+    
+    // --- HANDLE RESTORE DARI UPLOAD FILE ---
+    if exists && state == "wait_restore_file" {
+        if msg.Document != nil {
+            handleRestoreFromUpload(bot, msg)
+        } else {
+            sendMessage(bot, msg.Chat.ID, "❌ Mohon kirimkan file backup (.json), bukan teks.")
+        }
+        // Jangan reset state disini jika gagal, biarkan user coba lagi.
+        // Tapi jika sukses, handleRestoreFromUpload akan mereset state (lebih baik ditangani di situ)
+        return
+    }
+    // ----------------------------------------
+
     if exists {
         handleState(bot, msg, state)
         return
@@ -172,19 +188,17 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     case query.Data == "menu_backup":
         performManualBackup(bot, query.Message.Chat.ID)
     case query.Data == "menu_restore":
-        // Konfirmasi Restore
-        msg := tgbotapi.NewMessage(query.Message.Chat.ID, "❓ *KONFIRMASI RESTORE*\n\nProses ini akan mencoba membuat ulang akun dari file backup terakhir yang tersimpan di server.\n\nApakah Anda yakin ingin melanjutkan?")
+        // Ubah logika: Bot meminta user mengupload file dengan tombol batal
+        userStates[query.From.ID] = "wait_restore_file"
+        msg := tgbotapi.NewMessage(query.Message.Chat.ID, "📥 *RESTORE DARI FILE*\n\nSilakan kirimkan file backup `.json` Anda.\n\nBot akan otomatis membuat ulang akun yang ada di dalam file tersebut.")
         msg.ParseMode = "Markdown"
+        // Tambahkan tombol Batal
         msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
             tgbotapi.NewInlineKeyboardRow(
-                tgbotapi.NewInlineKeyboardButtonData("✅ Ya, Restore", "do_restore"),
                 tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel"),
             ),
         )
         sendAndTrack(bot, msg)
-    case query.Data == "do_restore":
-        // Eksekusi Restore jika user menyetujui
-        performRestore(bot, query.Message.Chat.ID)
     case query.Data == "menu_clean_restart":
         cleanAndRestartService(bot, query.Message.Chat.ID)
     // -------------------------------------
@@ -251,6 +265,133 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
         resetState(userID)
     }
 }
+
+// --- FITUR RESTORE DARI UPLOAD FILE ---
+
+func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
+    // Reset state dulu agar tidak spam jika user kirim ulang
+    resetState(msg.From.ID) 
+
+    sendMessage(bot, msg.Chat.ID, "⏳ Sedang mengunduh dan memproses file backup...")
+
+    // 1. Ambil URL download file dari Telegram
+    url, err := bot.GetFileDirectURL(msg.Document.FileID)
+    if err != nil {
+        sendMessage(bot, msg.Chat.ID, "❌ Gagal mengambil link file dari Telegram.")
+        return
+    }
+
+    // 2. Download file
+    resp, err := http.Get(url)
+    if err != nil {
+        sendMessage(bot, msg.Chat.ID, "❌ Gagal mendownload file.")
+        return
+    }
+    defer resp.Body.Close()
+
+    // 3. Decode JSON
+    var backupUsers []UserData
+    if err := json.NewDecoder(resp.Body).Decode(&backupUsers); err != nil {
+        sendMessage(bot, msg.Chat.ID, "❌ Format file backup rusak atau bukan JSON yang valid.")
+        return
+    }
+
+    if len(backupUsers) == 0 {
+        sendMessage(bot, msg.Chat.ID, "⚠️ File backup kosong.")
+        showMainMenu(bot, msg.Chat.ID)
+        return
+    }
+
+    sendMessage(bot, msg.Chat.ID, fmt.Sprintf("⏳ Memproses %d user...\nMohon tunggu sebentar.", len(backupUsers)))
+
+    successCount := 0
+    skippedCount := 0
+    failedCount := 0
+    var failedUsers []string
+
+    // Layout parsing tanggal (mendukung berbagai format)
+    layouts := []string{
+        "2006-01-02",
+        "2006-01-02 15:04:05",
+        "2006-01-02T15:04:05Z",
+        "2006-01-02T15:04:05+07:00",
+    }
+
+    for i, u := range backupUsers {
+        var expiredTime time.Time
+        var parseErr error
+        parsed := false
+
+        for _, layout := range layouts {
+            expiredTime, parseErr = time.Parse(layout, u.Expired)
+            if parseErr == nil {
+                parsed = true
+                break
+            }
+        }
+
+        if !parsed {
+            log.Printf("Restore: Gagal parse tanggal %s - %s", u.Password, u.Expired)
+            failedCount++
+            failedUsers = append(failedUsers, u.Password)
+            continue
+        }
+
+        duration := time.Until(expiredTime)
+        days := int(duration.Hours() / 24)
+
+        // Jika sudah expired, skip
+        if days <= 0 {
+            skippedCount++
+            continue
+        }
+
+        // Create User via API
+        res, err := apiCall("POST", "/user/create", map[string]interface{}{
+            "password": u.Password,
+            "days":     days,
+        })
+
+        if err != nil {
+            log.Printf("Restore: API Error %s: %v", u.Password, err)
+            failedCount++
+            failedUsers = append(failedUsers, u.Password)
+        } else if res["success"] == true {
+            successCount++
+        } else {
+            if msg, ok := res["message"].(string); ok {
+                if strings.Contains(strings.ToLower(msg), "already exists") || strings.Contains(strings.ToLower(msg), "sudah ada") {
+                    skippedCount++
+                } else {
+                    failedCount++
+                    failedUsers = append(failedUsers, fmt.Sprintf("%s(%s)", u.Password, msg))
+                }
+            } else {
+                failedCount++
+            }
+        }
+
+        // Jeda kecil agar tidak spam API
+        if i < len(backupUsers)-1 {
+            time.Sleep(200 * time.Millisecond)
+        }
+    }
+
+    msgResult := fmt.Sprintf("✅ *Restore Selesai*\n\n" +
+        "📂 Total Data: %d\n" +
+        "✅ Berhasil dibuat: %d\n" +
+        "⚠️ Dilewati (Sudah ada/Expired): %d\n",
+        len(backupUsers), successCount, skippedCount)
+
+    if failedCount > 0 {
+        msgResult += fmt.Sprintf("❌ Gagal (%d): %s", failedCount, strings.Join(failedUsers, ", "))
+    }
+
+    sendMessage(bot, msg.Chat.ID, msgResult)
+    showMainMenu(bot, msg.Chat.ID)
+}
+
+// --- FUNGSI LAINNYA ---
 
 func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action string) {
     users, err := getUsers()
@@ -455,7 +596,7 @@ func generateRandomPassword(length int) string {
     return string(b)
 }
 
-// --- FITUR BACKUP & RESTORE & RESTART ---
+// --- BACKUP & CLEAN FUNCTIONS ---
 
 func performAutoBackup(bot *tgbotapi.BotAPI, adminID int64) {
     filePath, err := saveBackupToFile()
@@ -496,6 +637,20 @@ func saveBackupToFile() (string, error) {
         return "", fmt.Errorf("tidak ada user untuk dibackup")
     }
 
+    // Ambil Domain Server untuk diisi ke dalam field "Host"
+    domain := "Unknown"
+    if res, err := apiCall("GET", "/info", nil); err == nil && res["success"] == true {
+        if data, ok := res["data"].(map[string]interface{}); ok {
+            if d, ok := data["domain"].(string); ok {
+                domain = d
+            }
+        }
+    }
+
+    for i := range users {
+        users[i].Host = domain
+    }
+
     timestamp := time.Now().Format("2006-01-02_15-04-05")
     filename := fmt.Sprintf("backup_users_%s.json", timestamp)
     fullPath := filepath.Join(BackupDir, filename)
@@ -510,150 +665,6 @@ func saveBackupToFile() (string, error) {
     }
 
     return fullPath, nil
-}
-
-func performRestore(bot *tgbotapi.BotAPI, chatID int64) {
-    sendMessage(bot, chatID, "⏳ Memulai restore...\n📂 Mencari file backup terbaru...")
-    
-    files, err := ioutil.ReadDir(BackupDir)
-    if err != nil {
-        log.Printf("Error reading backup dir: %v", err)
-        sendMessage(bot, chatID, "❌ Gagal membaca direktori backup.")
-        showMainMenu(bot, chatID)
-        return
-    }
-
-    if len(files) == 0 {
-        sendMessage(bot, chatID, "❌ Tidak ditemukan file backup di server.")
-        showMainMenu(bot, chatID)
-        return
-    }
-
-    // Sort files by mod time (newest first)
-    sort.Slice(files, func(i, j int) bool {
-        return files[i].ModTime().After(files[j].ModTime())
-    })
-
-    latestFile := files[0]
-    filePath := filepath.Join(BackupDir, latestFile.Name())
-
-    log.Printf("Restore: Memilih file %s", latestFile.Name())
-
-    content, err := ioutil.ReadFile(filePath)
-    if err != nil {
-        log.Printf("Restore: Gagal baca file %v", err)
-        sendMessage(bot, chatID, "❌ Gagal membaca file backup.")
-        return
-    }
-
-    var backupUsers []UserData
-    if err := json.Unmarshal(content, &backupUsers); err != nil {
-        log.Printf("Restore: Gagal unmarshal JSON %v", err)
-        sendMessage(bot, chatID, "❌ Format file backup rusak atau tidak valid.")
-        return
-    }
-
-    if len(backupUsers) == 0 {
-        sendMessage(bot, chatID, "⚠️ File backup berisi 0 user.")
-        showMainMenu(bot, chatID)
-        return
-    }
-
-    log.Printf("Restore: Menemukan %d user di backup.", len(backupUsers))
-    sendMessage(bot, chatID, fmt.Sprintf("⏳ Memproses %d user...\nMohon tunggu, ini mungkin memakan waktu.", len(backupUsers)))
-
-    successCount := 0
-    skippedCount := 0
-    failedCount := 0
-    var failedUsers []string
-
-    // Layout parsing tanggal yang mungkin digunakan
-    layouts := []string{
-        "2006-01-02 15:04:05",    // Format standar SQL/V2Ray
-        "2006-01-02T15:04:05Z",   // ISO 8601 UTC
-        "2006-01-02T15:04:05+07:00", // ISO 8601 dengan offset (WIB)
-        "2006-01-02T15:04:05.999Z", // ISO dengan milidetik
-    }
-
-    for i, u := range backupUsers {
-        // Parsing tanggal dengan fallback layout
-        var expiredTime time.Time
-        var parseErr error
-        parsed := false
-
-        for _, layout := range layouts {
-            expiredTime, parseErr = time.Parse(layout, u.Expired)
-            if parseErr == nil {
-                parsed = true
-                break
-            }
-        }
-
-        if !parsed {
-            log.Printf("Restore: Gagal parse tanggal untuk user %s (Value: %s). Error: %v", u.Password, u.Expired, parseErr)
-            failedCount++
-            failedUsers = append(failedUsers, u.Password)
-            continue
-        }
-
-        duration := time.Until(expiredTime)
-        days := int(duration.Hours() / 24)
-
-        // Cek jika sudah expired di masa lalu
-        if days <= 0 {
-            log.Printf("Restore: Skip user %s karena sudah expired (Days: %d)", u.Password, days)
-            skippedCount++
-            continue
-        }
-
-        // Coba create user
-        res, err := apiCall("POST", "/user/create", map[string]interface{}{
-            "password": u.Password,
-            "days":     days,
-        })
-
-        if err != nil {
-            log.Printf("Restore: API Error untuk user %s: %v", u.Password, err)
-            failedCount++
-            failedUsers = append(failedUsers, u.Password)
-        } else if res["success"] == true {
-            successCount++
-            log.Printf("Restore: Sukses user %s (%d hari)", u.Password, days)
-        } else {
-            // Cek jika gagal karena user sudah ada
-            if msg, ok := res["message"].(string); ok {
-                if strings.Contains(strings.ToLower(msg), "already exists") || strings.Contains(strings.ToLower(msg), "sudah ada") {
-                    log.Printf("Restore: Skip user %s (sudah ada)", u.Password)
-                    skippedCount++
-                } else {
-                    log.Printf("Restore: Gagal create user %s: %s", u.Password, msg)
-                    failedCount++
-                    failedUsers = append(failedUsers, fmt.Sprintf("%s(%s)", u.Password, msg))
-                }
-            } else {
-                failedCount++
-                failedUsers = append(failedUsers, u.Password)
-            }
-        }
-
-        // Sleep sedikit untuk mencegah spam API jika user banyak
-        if i < len(backupUsers)-1 {
-            time.Sleep(200 * time.Millisecond)
-        }
-    }
-
-    msgResult := fmt.Sprintf("✅ *Restore Selesai*\n\n" +
-        "📂 File: `%s`\n" +
-        "✅ Berhasil dibuat: %d\n" +
-        "⚠️ Dilewati (Sudah ada/Expired): %d\n",
-        latestFile.Name(), successCount, skippedCount)
-
-    if failedCount > 0 {
-        msgResult += fmt.Sprintf("❌ Gagal (%d): %s", failedCount, strings.Join(failedUsers, ", "))
-    }
-    
-    sendMessage(bot, chatID, msgResult)
-    showMainMenu(bot, chatID)
 }
 
 func cleanAndRestartService(bot *tgbotapi.BotAPI, chatID int64) {
@@ -821,13 +832,14 @@ func getNearExpiredUsers() ([]UserData, error) {
     var nearExpired []UserData
     expiryThreshold := time.Now().Add(24 * time.Hour)
 
+    layouts := []string{
+        "2006-01-02",
+        "2006-01-02 15:04:05",
+        "2006-01-02T15:04:05Z",
+        "2006-01-02T15:04:05+07:00",
+    }
+    
     for _, u := range users {
-        layouts := []string{
-            "2006-01-02 15:04:05",
-            "2006-01-02T15:04:05Z",
-            "2006-01-02T15:04:05+07:00",
-        }
-        
         var expiredTime time.Time
         var parseErr error
         parsed := false
