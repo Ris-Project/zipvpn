@@ -483,18 +483,14 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         totalUsers = len(users)
     }
 
+    // --- LOGIKA EXPIRED DIPISAH TAPI TIDAK DITAMPILKAN KE MSGTEXT ---
     nearExpiredUsers, err := getNearExpiredUsers()
-    expiredText := ""
     if err == nil && len(nearExpiredUsers) > 0 {
-        expiredText += "\n\n⚠️ *AKUN AKAN SEGERA KADALUARSA (Dalam 24 Jam):*\n"
-        for i, u := range nearExpiredUsers {
-            if i >= 5 {
-                expiredText += "... dan user lainnya\n"
-                break
-            }
-            expiredText += fmt.Sprintf("•  `%s` (Expired: %s)\n", u.Password, u.Expired)
-        }
+        // Logika ini tetap berjalan di belakang layar jika Anda ingin menggunakannya di masa depan,
+        // tapi tidak ditambahkan ke pesan menu (msgText).
+        _ = nearExpiredUsers
     }
+    // ------------------------------------------------------------------
 
     msgText := fmt.Sprintf("✨ *WELCOME TO BOT PGETUNNEL UDP ZIVPN*\n\n"+
         "Server Info:\n"+
@@ -506,7 +502,8 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         "Silakan pilih menu di bawah ini:",
         domain, ipInfo.City, ipInfo.Isp, totalUsers)
 
-    msgText += expiredText
+    // expiredText TIDAK lagi ditambahkan ke sini
+    // msgText += expiredText 
 
     deleteLastMessage(bot, chatID)
 
