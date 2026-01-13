@@ -689,8 +689,11 @@ func saveBackupToFile() (string, error) {
         users[i].Host = domain
     }
 
-    timestamp := time.Now().Format("2006-01-02_15-04-05")
-    filename := fmt.Sprintf("backup_users_%s.json", timestamp)
+    // Nama file dibuat statis (tanpa tanggal)
+    // File akan bernama: backup_users.json
+    filename := "backup_users.json"
+    
+    // Gabungkan dengan direktori backup
     fullPath := filepath.Join(BackupDir, filename)
 
     data, err := json.MarshalIndent(users, "", "  ")
@@ -702,7 +705,12 @@ func saveBackupToFile() (string, error) {
         return "", fmt.Errorf("gagal menulis file: %v", err)
     }
 
-    return fullPath, nil
+    // Kembalikan Path Absolut
+    absPath, err := filepath.Abs(fullPath)
+    if err != nil {
+        return fullPath, nil
+    }
+    return absPath, nil
 }
 
 func cleanAndRestartService(bot *tgbotapi.BotAPI, chatID int64) {
