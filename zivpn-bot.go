@@ -48,8 +48,9 @@ type IpInfo struct {
     Isp  string `json:"isp"`
 }
 
+// Struct User Data (Disesuaikan dengan format JSON yang diinginkan)
 type UserData struct {
-    Host     string `json:"host"` // Host untuk backup
+    Host     string `json:"host"`
     Password string `json:"password"`
     Expired  string `json:"expired"`
     Status   string `json:"status"`
@@ -62,6 +63,7 @@ var lastMessageIDs = make(map[int64]int)
 func main() {
     rand.NewSource(time.Now().UnixNano())
 
+    // Pastikan direktori backup ada
     if err := os.MkdirAll(BackupDir, 0755); err != nil {
         log.Printf("Gagal membuat direktori backup: %v", err)
     }
@@ -91,7 +93,7 @@ func main() {
         }
     }()
 
-    // --- BACKGROUND WORKER (AUTO BACKUP) ---
+    // --- BACKGROUND WORKER (AUTO BACKUP KE SERVER) ---
     go func() {
         performAutoBackup(bot, config.AdminID)
         ticker := time.NewTicker(AutoBackupInterval)
@@ -123,16 +125,17 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 
     state, exists := userStates[msg.From.ID]
     
-    // Handle Restore dari Upload File (Fitur tambahan tapi tetap)
+    // --- HANDLE RESTORE DARI UPLOAD FILE ---
     if exists && state == "wait_restore_file" {
         if msg.Document != nil {
             handleRestoreFromUpload(bot, msg)
         } else {
-            sendMessage(bot, msg.Chat.ID, "❌ Mohon kirimkan file backup (.json).")
+            sendMessage(bot, msg.Chat.ID, "❌ Mohon kirimkan file backup (.json), bukan teks.")
         }
-        // Jangan reset state jika gagal
+        resetState(msg.From.ID)
         return
     }
+    // ----------------------------------------
 
     if exists {
         handleState(bot, msg, state)
@@ -184,16 +187,9 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     case query.Data == "menu_backup":
         performManualBackup(bot, query.Message.Chat.ID)
     case query.Data == "menu_restore":
-        // Tampilkan menu restore (Upload File) dengan tombol Batal
+        // Ubah logika: Bot meminta user mengupload file
         userStates[query.From.ID] = "wait_restore_file"
-        msg := tgbotapi.NewMessage(query.Message.Chat.ID, "📥 *RESTORE DATA*\n\nSilakan kirimkan file backup `.json` Anda.\n\nBot akan otomatis membuat ulang akun yang ada di dalam file tersebut.")
-        msg.ParseMode = "Markdown"
-        msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
-            tgbotapi.NewInlineKeyboardRow(
-                tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel"),
-            ),
-        )
-        sendAndTrack(bot, msg)
+        sendMessage(bot, query.Message.Chat.ID, "📥 *RESTORE DARI FILE*\n\nSilakan kirimkan file backup `.json` Anda.\n\nBot akan otomatis membuat ulang akun yang ada di dalam file tersebut.")
     case query.Data == "menu_clean_restart":
         cleanAndRestartService(bot, query.Message.Chat.ID)
     // -------------------------------------
@@ -261,16 +257,19 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
     }
 }
 
+// --- FITUR RESTORE DARI UPLOAD FILE ---
+
 func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
-    resetState(msg.From.ID) 
     sendMessage(bot, msg.Chat.ID, "⏳ Sedang mengunduh dan memproses file backup...")
 
+    // 1. Ambil URL download file dari Telegram
     url, err := bot.GetFileDirectURL(msg.Document.FileID)
     if err != nil {
         sendMessage(bot, msg.Chat.ID, "❌ Gagal mengambil link file dari Telegram.")
         return
     }
 
+    // 2. Download file
     resp, err := http.Get(url)
     if err != nil {
         sendMessage(bot, msg.Chat.ID, "❌ Gagal mendownload file.")
@@ -278,6 +277,7 @@ func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
     }
     defer resp.Body.Close()
 
+    // 3. Decode JSON
     var backupUsers []UserData
     if err := json.NewDecoder(resp.Body).Decode(&backupUsers); err != nil {
         sendMessage(bot, msg.Chat.ID, "❌ Format file backup rusak atau bukan JSON yang valid.")
@@ -297,6 +297,7 @@ func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
     failedCount := 0
     var failedUsers []string
 
+    // Layout parsing tanggal (mendukung berbagai format)
     layouts := []string{
         "2006-01-02",
         "2006-01-02 15:04:05",
@@ -318,6 +319,7 @@ func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
         }
 
         if !parsed {
+            log.Printf("Restore: Gagal parse tanggal %s - %s", u.Password, u.Expired)
             failedCount++
             failedUsers = append(failedUsers, u.Password)
             continue
@@ -326,17 +328,20 @@ func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
         duration := time.Until(expiredTime)
         days := int(duration.Hours() / 24)
 
+        // Jika sudah expired, skip
         if days <= 0 {
             skippedCount++
             continue
         }
 
+        // Create User via API
         res, err := apiCall("POST", "/user/create", map[string]interface{}{
             "password": u.Password,
             "days":     days,
         })
 
         if err != nil {
+            log.Printf("Restore: API Error %s: %v", u.Password, err)
             failedCount++
             failedUsers = append(failedUsers, u.Password)
         } else if res["success"] == true {
@@ -354,6 +359,7 @@ func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
             }
         }
 
+        // Jeda kecil agar tidak spam API
         if i < len(backupUsers)-1 {
             time.Sleep(200 * time.Millisecond)
         }
@@ -372,6 +378,8 @@ func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
     sendMessage(bot, msg.Chat.ID, msgResult)
     showMainMenu(bot, msg.Chat.ID)
 }
+
+// --- FUNGSI LAINNYA ---
 
 func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action string) {
     users, err := getUsers()
@@ -472,7 +480,6 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         }
     }
 
-    // --- TAMPILAN MENU ASLI (DIKEMBALIKAN) ---
     msgText := fmt.Sprintf("✨ *WELCOME TO BOT PGETUNNEL UDP ZIVPN*\n\n" +
         "Server Info:\n" +
         "•  🌐 *Domain*: `%s`\n" +
@@ -577,7 +584,7 @@ func generateRandomPassword(length int) string {
     return string(b)
 }
 
-// --- FITUR BACKUP & RESTORE ---
+// --- BACKUP & CLEAN FUNCTIONS ---
 
 func performAutoBackup(bot *tgbotapi.BotAPI, adminID int64) {
     filePath, err := saveBackupToFile()
@@ -618,6 +625,7 @@ func saveBackupToFile() (string, error) {
         return "", fmt.Errorf("tidak ada user untuk dibackup")
     }
 
+    // Ambil Domain Server untuk diisi ke dalam field "Host"
     domain := "Unknown"
     if res, err := apiCall("GET", "/info", nil); err == nil && res["success"] == true {
         if data, ok := res["data"].(map[string]interface{}); ok {
@@ -726,7 +734,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
     }
 }
 
-// --- API Calls (DIPERBAIKI: DITAMBAHKAN TIMEOUT) ---
+// --- API Calls ---
 
 func apiCall(method, endpoint string, payload interface{}) (map[string]interface{}, error) {
     var reqBody []byte
@@ -739,11 +747,7 @@ func apiCall(method, endpoint string, payload interface{}) (map[string]interface
         }
     }
 
-    // !!! FIX PALING PENTING !!!
-    // Client HTTP diberi batas waktu (Timeout) 5 detik.
-    // Jadi jika API Panel lemot, bot tidak akan macet/biang (hang).
-    client := &http.Client{Timeout: 5 * time.Second}
-
+    client := &http.Client{}
     req, err := http.NewRequest(method, ApiUrl+endpoint, bytes.NewBuffer(reqBody))
     if err != nil {
         return nil, err
@@ -791,6 +795,7 @@ func getUsers() ([]UserData, error) {
 
     var users []UserData
     
+    // Handling data jika berupa slice langsung
     if dataSlice, ok := res["data"].([]interface{}); ok {
         dataBytes, err := json.Marshal(dataSlice)
         if err != nil {
