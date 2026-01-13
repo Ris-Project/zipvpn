@@ -240,7 +240,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 
     switch state {
     case "create_username":
-        setTempData(userID, map[string]string{"username": text}) // Reset dan set username
+        setTempData(userID, map[string]string{"username": text})
         setState(userID, "create_days")
         sendMessage(bot, msg.Chat.ID, fmt.Sprintf("⏳ *CREATE USER*\nPassword: `%s`\nMasukkan **Durasi** (*Hari*) pembuatan:", text))
 
@@ -250,17 +250,16 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
             return
         }
-        // Ambil username dari tempUserData
         stateMutex.RLock()
         data, ok := tempUserData[userID]
         stateMutex.RUnlock()
-        
+
         if !ok {
             sendMessage(bot, msg.Chat.ID, "❌ Sesi berakhir. Silakan mulai dari awal.")
             resetState(userID)
             return
         }
-        
+
         createUser(bot, msg.Chat.ID, data["username"], days)
         resetState(userID)
 
@@ -270,7 +269,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
             return
         }
-        
+
         stateMutex.RLock()
         data, ok := tempUserData[userID]
         stateMutex.RUnlock()
@@ -563,7 +562,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
     msg := tgbotapi.NewMessage(chatID, text)
     msg.ParseMode = "Markdown"
-    
+
     stateMutex.RLock()
     _, inState := userStates[chatID]
     stateMutex.RUnlock()
@@ -635,47 +634,32 @@ func generateRandomPassword(length int) string {
     return string(b)
 }
 
-// --- FITUR BACKUP & RESTORE ---
-
-func performAutoBackup(bot *tgbotapi.BotAPI, adminID int64) {
-    filePath, err := saveBackupToFile()
-    if err != nil {
-        log.Printf("❌ [AutoBackup] Gagal: %v", err)
-        return
-    }
-    log.Printf("✅ [AutoBackup] Berhasil disimpan: %s", filePath)
-}
-
-func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
-    sendMessage(bot, chatID, "⏳ Sedang membackup data user...")
-
-    filePath, err := saveBackupToFile()
-    if err != nil {
-        sendMessage(bot, chatID, "❌ Gagal melakukan backup: "+err.Error())
-        return
-    }
-
-    doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(filePath))
-    doc.Caption = fmt.Sprintf("💾 *Backup Data User*\nTanggal: %s\nFile: %s", time.Now().Format("2006-01-02 15:04:05"), filepath.Base(filePath))
-    doc.ParseMode = "Markdown"
-
-    deleteLastMessage(bot, chatID)
-    if _, err := bot.Send(doc); err != nil {
-        sendMessage(bot, chatID, "❌ Gagal mengirim file backup: "+err.Error())
-    }
-    showMainMenu(bot, chatID)
-}
+// --- FITUR BACKUP & RESTORE (FINAL VERSION) ---
 
 func saveBackupToFile() (string, error) {
+    log.Println("=== [DEBUG 1] Memulai saveBackupToFile ===")
+
+    // 1. Cek dan Buat Folder Backup jika belum ada
+    if err := os.MkdirAll(BackupDir, 0755); err != nil {
+        log.Printf("❌ [DEBUG 2] Gagal membuat folder %s: %v", BackupDir, err)
+        return "", fmt.Errorf("gagal membuat folder backup: %v", err)
+    }
+    log.Printf("✅ [DEBUG 3] Folder %s siap/ditemukan.", BackupDir)
+
+    // 2. Ambil Data User
     users, err := getUsers()
     if err != nil {
+        log.Printf("❌ [DEBUG 4] Gagal getUsers: %v", err)
         return "", fmt.Errorf("gagal ambil data user: %v", err)
     }
 
     if len(users) == 0 {
+        log.Println("⚠️ [DEBUG 5] Data user kosong.")
         return "", fmt.Errorf("tidak ada user untuk dibackup")
     }
+    log.Printf("✅ [DEBUG 6] Berhasil ambil %d user.", len(users))
 
+    // 3. Ambil Info Domain
     domain := "Unknown"
     if res, err := apiCall("GET", "/info", nil); err == nil && res["success"] == true {
         if data, ok := res["data"].(map[string]interface{}); ok {
@@ -689,28 +673,108 @@ func saveBackupToFile() (string, error) {
         users[i].Host = domain
     }
 
-    // Nama file dibuat statis (tanpa tanggal)
-    // File akan bernama: backup_users.json
+    // 4. Tentukan Path File (Nama Statis Tanpa Tanggal)
     filename := "backup_users.json"
-    
-    // Gabungkan dengan direktori backup
     fullPath := filepath.Join(BackupDir, filename)
 
+    log.Printf("✅ [DEBUG 7] Path tujuan file: %s", fullPath)
+
+    // 5. Marshal Data
     data, err := json.MarshalIndent(users, "", "  ")
     if err != nil {
+        log.Printf("❌ [DEBUG 8] Gagal marshal JSON: %v", err)
         return "", fmt.Errorf("gagal marshal data: %v", err)
     }
 
+    // 6. Tulis ke File (Write)
     if err := os.WriteFile(fullPath, data, 0644); err != nil {
-        return "", fmt.Errorf("gagal menulis file: %v", err)
+        log.Printf("❌ [DEBUG 9] GAGAL WRITE FILE (Permission?): %v", err)
+        return "", fmt.Errorf("GAGAL MENULIS FILE KE DISK: %v\nPastikan bot memiliki akses tulis ke folder: %s", err, BackupDir)
     }
 
-    // Kembalikan Path Absolut
+    // 7. Cek apakah file benar-benar terbuat
+    if _, err := os.Stat(fullPath); err != nil {
+        log.Printf("❌ [DEBUG 10] File tidak ditemukan setelah write: %v", err)
+        return "", fmt.Errorf("file tidak ditemukan setelah write: %v", err)
+    }
+
     absPath, err := filepath.Abs(fullPath)
     if err != nil {
         return fullPath, nil
     }
+
+    log.Printf("✅ [DEBUG 11] Berhasil membuat file di: %s", absPath)
     return absPath, nil
+}
+
+func performAutoBackup(bot *tgbotapi.BotAPI, adminID int64) {
+    filePath, err := saveBackupToFile()
+    if err != nil {
+        log.Printf("❌ [AutoBackup] Gagal: %v", err)
+        return
+    }
+    log.Printf("✅ [AutoBackup] Berhasil disimpan: %s", filePath)
+}
+
+func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
+    log.Println("=== [DEBUG START] Perintah Backup Manual Diterima ===")
+    sendMessage(bot, chatID, "⏳ Sedang memproses backup...")
+
+    // 1. Panggil fungsi simpan file
+    filePath, err := saveBackupToFile()
+    if err != nil {
+        log.Printf("❌ [DEBUG END] Gagal di saveBackupToFile: %v", err)
+        sendMessage(bot, chatID, "❌ **GAGAL MEMBUAT FILE**\n\nServer Error:\n`"+err.Error()+"`\n\n*Cek log terminal bot untuk detail lengkap.*")
+        return
+    }
+
+    // 2. Cek info file (Ukuran & Keberadaan)
+    fileInfo, err := os.Stat(filePath)
+    if os.IsNotExist(err) {
+        log.Printf("❌ [DEBUG] File hilang setelah dibuat: %s", filePath)
+        sendMessage(bot, chatID, "❌ Error Aneh: File backup hilang setelah dibuat.")
+        return
+    }
+
+    log.Printf("✅ [DEBUG] File Info - Path: %s, Size: %d bytes", filePath, fileInfo.Size())
+
+    // 3. Cek Limit Telegram (50MB)
+    if fileInfo.Size() > (50 * 1024 * 1024) {
+        sizeInMb := fileInfo.Size() / 1024 / 1024
+        sendMessage(bot, chatID, fmt.Sprintf("❌ **GAGAL KIRIM**\n\nFile terlalu besar: **%d MB**.\nLimit Telegram: 50 MB.\n\nAmbil file manual di server:\n`%s`", sizeInMb, filePath))
+        showMainMenu(bot, chatID)
+        return
+    }
+
+    // 4. Kirim ke Telegram
+    log.Println("✅ [DEBUG] Mencoba mengirim file ke Telegram...")
+
+    doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(filePath))
+    doc.Caption = fmt.Sprintf("💾 *Backup Data User*\n📁 Ukuran: %.2f MB\n📂 Lokasi: `%s`",
+        float64(fileInfo.Size())/1024/1024,
+        filePath)
+    doc.ParseMode = "Markdown"
+
+    deleteLastMessage(bot, chatID)
+
+    _, err = bot.Send(doc)
+    if err != nil {
+        log.Printf("❌ [DEBUG END] GAGAL KIRIM KE TELEGRAM: %v", err)
+
+        errorDetail := err.Error()
+        if strings.Contains(errorDetail, "file not found") {
+            errorDetail = "Bot tidak bisa membaca file tersebut (Permission Denied / Path Salah)."
+        } else if strings.Contains(errorDetail, "wrong file identifier") {
+            errorDetail = "Format file salah atau korup."
+        }
+
+        sendMessage(bot, chatID, fmt.Sprintf("❌ **GAGAL MENGIRIM KE TELEGRAM**\n\nError: %s\n\n**File tersimpan di server:**\n`%s`\n\nSilakan ambil via SSH jika perlu.", errorDetail, filePath))
+        showMainMenu(bot, chatID)
+        return
+    }
+
+    log.Println("✅ [DEBUG END] Backup sukses terkirim!")
+    showMainMenu(bot, chatID)
 }
 
 func cleanAndRestartService(bot *tgbotapi.BotAPI, chatID int64) {
@@ -805,7 +869,7 @@ func apiCall(method, endpoint string, payload interface{}) (map[string]interface
         }
     }
 
-    client := &http.Client{Timeout: 10 * time.Second} // Ditingkatkan timeoutnya sedikit jadi 10 detik
+    client := &http.Client{Timeout: 10 * time.Second}
 
     req, err := http.NewRequest(method, ApiUrl+endpoint, bytes.NewBuffer(reqBody))
     if err != nil {
@@ -821,7 +885,6 @@ func apiCall(method, endpoint string, payload interface{}) (map[string]interface
     }
     defer resp.Body.Close()
 
-    // Cek HTTP Status Code
     if resp.StatusCode != http.StatusOK {
         return nil, fmt.Errorf("API returned status: %d", resp.StatusCode)
     }
@@ -1138,7 +1201,7 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
             sendMessage(bot, chatID, "❌ Format data user salah.")
             return
         }
-        
+
         if len(users) == 0 {
             sendMessage(bot, chatID, "📂 Tidak ada user saat ini.")
             showMainMenu(bot, chatID)
@@ -1148,8 +1211,10 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
         msg := fmt.Sprintf("📋 *DAFTAR AKUN ZIVPN* (Total: %d)\n\n", len(users))
         for i, u := range users {
             user, ok := u.(map[string]interface{})
-            if !ok { continue }
-            
+            if !ok {
+                continue
+            }
+
             statusIcon := "🟢"
             if user["status"] == "Expired" {
                 statusIcon = "🔴"
@@ -1178,7 +1243,7 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
             sendMessage(bot, chatID, "❌ Format data salah.")
             return
         }
-        
+
         ipInfo, _ := getIpInfo()
 
         msg := fmt.Sprintf("⚙️ *INFORMASI DETAIL SERVER*\n"+
