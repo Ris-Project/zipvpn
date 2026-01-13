@@ -53,6 +53,7 @@ type UserData struct {
     Password string `json:"password"`
     Expired  string `json:"expired"`
     Status   string `json:"status"`
+    Link     string `json:"link"` // Added for potential key in list
 }
 
 // Variabel global dengan Mutex untuk keamanan konkurensi (Thread-Safe)
@@ -187,7 +188,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     case callbackData == "menu_info":
         systemInfo(bot, query.Message.Chat.ID)
 
-    // --- FITUR BARU: GENERATED KEY ---
+    // --- FITUR: GENERATED KEY ---
     case callbackData == "menu_generate_key":
         showUserSelection(bot, query.Message.Chat.ID, 1, "generate_key")
     // -------------------------------
@@ -231,7 +232,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
             ),
         )
         sendAndTrack(bot, msg)
-    // --- FITUR BARU: SELECT GENERATE KEY ---
+    // --- FITUR: SELECT GENERATE KEY ---
     case strings.HasPrefix(callbackData, "select_generate_key:"):
         username := strings.TrimPrefix(callbackData, "select_generate_key:")
         generateUserKey(bot, query.Message.Chat.ID, username)
@@ -544,7 +545,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         // --------------------
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("♻️ Restore Data", "menu_restore"),
-            tgbotapi.NewInlineKeyboardButtonData("🧹 Hapus Expired & Restart", "menu_clean_restart"),
+            tgbotapi.NewInlineKeyboardButtonData("🧹 Hapus Expired", "menu_clean_restart"),
         ),
     )
 
@@ -642,50 +643,65 @@ func generateRandomPassword(length int) string {
     return string(b)
 }
 
-// --- FITUR BARU: GENERATE USER KEY ---
+// --- FITUR: GENERATE USER KEY (FIXED VERSION) ---
 
 func generateUserKey(bot *tgbotapi.BotAPI, chatID int64, username string) {
-    // Asumsi: API Panel ZiVPN memiliki endpoint POST /user/genkey
-    // Jika endpoint berbeda di panel Anda, silakan ubah "/user/genkey" di bawah ini
-    res, err := apiCall("POST", "/user/genkey", map[string]interface{}{
+    var res map[string]interface{}
+    var err error
+
+    // 1. Coba Endpoint Utama: POST /user/genkey
+    res, err = apiCall("POST", "/user/genkey", map[string]interface{}{
         "password": username,
     })
 
+    // 2. Fallback jika error: Coba POST /genkey (Tanpa /user/)
+    if err != nil || res["success"] != true {
+        log.Println("Fallback 1: Mencoba endpoint /genkey...")
+        res, err = apiCall("POST", "/genkey", map[string]interface{}{
+            "password": username,
+        })
+    }
+
     if err != nil {
-        sendMessage(bot, chatID, "❌ Error API (Endpoint mungkin tidak tersedia): "+err.Error())
+        sendMessage(bot, chatID, "❌ Error Koneksi API: "+err.Error())
         showMainMenu(bot, chatID)
         return
     }
 
-    if res["success"] == true {
-        data, ok := res["data"].(map[string]interface{})
-        if !ok {
-            sendMessage(bot, chatID, "❌ Format data respons dari API tidak valid.")
-            showMainMenu(bot, chatID)
-            return
+    if res["success"] != true {
+        msg, _ := res["message"].(string)
+        if msg == "" {
+            msg = "Gagal generate key (API Success: false)"
         }
+        sendMessage(bot, chatID, "❌ "+msg)
+        showMainMenu(bot, chatID)
+        return
+    }
 
-        // Coba mengambil field key/link yang umum
-        var keyLink string
-        if link, ok := data["link"].(string); ok {
-            keyLink = link
-        } else if key, ok := data["key"].(string); ok {
-            keyLink = key
-        } else if url, ok := data["url"].(string); ok {
-            keyLink = url
-        } else if sub, ok := data["subscription"].(string); ok {
-            keyLink = sub
-        } else {
-            // Jika API tidak mengembalikan link, cek apakah ada data lain
-            sendMessage(bot, chatID, "⚠️ API berhasil, tapi tidak menemukan Link/Key dalam respons.\nPanel Anda mungkin menggunakan format yang berbeda.")
-            showMainMenu(bot, chatID)
-            return
+    data, ok := res["data"].(map[string]interface{})
+    if !ok {
+        sendMessage(bot, chatID, "❌ Format data respons API tidak valid (bukan map).")
+        showMainMenu(bot, chatID)
+        return
+    }
+
+    // 3. Coba cari field link di berbagai nama variabel yang umum
+    var keyLink string
+    fieldsToCheck := []string{"link", "subscription", "subscription_url", "key", "url", "vmess", "vless", "ss", "trojan"}
+
+    for _, field := range fieldsToCheck {
+        if val, ok := data[field].(string); ok && val != "" {
+            keyLink = val
+            break
         }
+    }
 
+    // 4. Jika ditemukan link
+    if keyLink != "" {
         msg := fmt.Sprintf("🔑 *GENERATED KEY / SUBSCRIPTION LINK*\n\n"+
             "User: `%s`\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-            "%s\n"+
+            "`%s`\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
             "Silakan copy link di atas dan import ke aplikasi V2Ray/v2rayNG/Clash.",
             username, keyLink)
@@ -695,14 +711,18 @@ func generateUserKey(bot *tgbotapi.BotAPI, chatID int64, username string) {
         deleteLastMessage(bot, chatID)
         bot.Send(reply)
         showMainMenu(bot, chatID)
-    } else {
-        errMsg, ok := res["message"].(string)
-        if !ok {
-            errMsg = "Gagal generate key."
-        }
-        sendMessage(bot, chatID, fmt.Sprintf("❌ %s", errMsg))
-        showMainMenu(bot, chatID)
+        return
     }
+
+    // 5. Jika TIDAK ditemukan link: Kirim Raw JSON untuk Debug
+    // Ini penting agar kita tahu apa yang dikembalikan API panel Anda
+    jsonBytes, _ := json.MarshalIndent(data, "", "  ")
+    
+    sendMessage(bot, chatID, "⚠️ API berhasil (Success), tapi bot tidak bisa menemukan Link/Subscription Key.\n\n"+
+        "**Raw Data dari Server:**\n```json\n"+string(jsonBytes)+"\n```\n\n"+
+        "Harap kirim data ini kepada developer agar bot dapat disesuaikan dengan panel Anda.")
+    
+    showMainMenu(bot, chatID)
 }
 
 // --- FITUR BACKUP & RESTORE (FINAL VERSION) ---
