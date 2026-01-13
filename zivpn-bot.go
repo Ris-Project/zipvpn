@@ -53,7 +53,6 @@ type UserData struct {
     Password string `json:"password"`
     Expired  string `json:"expired"`
     Status   string `json:"status"`
-    Link     string `json:"link"` // Added for potential key in list
 }
 
 // Variabel global dengan Mutex untuk keamanan konkurensi (Thread-Safe)
@@ -188,11 +187,6 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     case callbackData == "menu_info":
         systemInfo(bot, query.Message.Chat.ID)
 
-    // --- FITUR: GENERATED KEY ---
-    case callbackData == "menu_generate_key":
-        showUserSelection(bot, query.Message.Chat.ID, 1, "generate_key")
-    // -------------------------------
-
     case callbackData == "menu_backup":
         performManualBackup(bot, query.Message.Chat.ID)
     case callbackData == "menu_restore":
@@ -232,12 +226,6 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
             ),
         )
         sendAndTrack(bot, msg)
-    // --- FITUR: SELECT GENERATE KEY ---
-    case strings.HasPrefix(callbackData, "select_generate_key:"):
-        username := strings.TrimPrefix(callbackData, "select_generate_key:")
-        generateUserKey(bot, query.Message.Chat.ID, username)
-    // ---------------------------------------
-
     case strings.HasPrefix(callbackData, "confirm_delete:"):
         username := strings.TrimPrefix(callbackData, "confirm_delete:")
         deleteUser(bot, query.Message.Chat.ID, username)
@@ -470,8 +458,6 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
         title = "🗑️ HAPUS AKUN"
     case "renew":
         title = "🔄 PERPANJANG AKUN"
-    case "generate_key":
-        title = "🔑 GENERATE KEY (SUBSCRIPTION LINK)"
     }
 
     msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("*%s*\nPilih user dari daftar di bawah (Halaman %d dari %d):", title, page, totalPages))
@@ -500,6 +486,8 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
     // --- LOGIKA EXPIRED DIPISAH TAPI TIDAK DITAMPILKAN KE MSGTEXT ---
     nearExpiredUsers, err := getNearExpiredUsers()
     if err == nil && len(nearExpiredUsers) > 0 {
+        // Logika ini tetap berjalan di belakang layar jika Anda ingin menggunakannya di masa depan,
+        // tapi tidak ditambahkan ke pesan menu (msgText).
         _ = nearExpiredUsers
     }
     // ------------------------------------------------------------------
@@ -513,6 +501,9 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         "Untuk bantuan, hubungi Admin: @JesVpnt\n\n"+
         "Silakan pilih menu di bawah ini:",
         domain, ipInfo.City, ipInfo.Isp, totalUsers)
+
+    // expiredText TIDAK lagi ditambahkan ke sini
+    // msgText += expiredText 
 
     deleteLastMessage(bot, chatID)
 
@@ -537,15 +528,12 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
             tgbotapi.NewInlineKeyboardButtonData("📋 Daftar Akun", "menu_list"),
             tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
         ),
-        // --- TOMBOL BARU ---
         tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("🔑 Generate Key", "menu_generate_key"),
             tgbotapi.NewInlineKeyboardButtonData("💾 Backup Data", "menu_backup"),
-        ),
-        // --------------------
-        tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("♻️ Restore Data", "menu_restore"),
-            tgbotapi.NewInlineKeyboardButtonData("🧹 Hapus Expired", "menu_clean_restart"),
+        ),
+        tgbotapi.NewInlineKeyboardRow(
+            tgbotapi.NewInlineKeyboardButtonData("🧹 Hapus Expired & Restart", "menu_clean_restart"),
         ),
     )
 
@@ -643,99 +631,19 @@ func generateRandomPassword(length int) string {
     return string(b)
 }
 
-// --- FITUR: GENERATE USER KEY (FIXED VERSION) ---
-
-func generateUserKey(bot *tgbotapi.BotAPI, chatID int64, username string) {
-    var res map[string]interface{}
-    var err error
-
-    // 1. Coba Endpoint Utama: POST /user/genkey
-    res, err = apiCall("POST", "/user/genkey", map[string]interface{}{
-        "password": username,
-    })
-
-    // 2. Fallback jika error: Coba POST /genkey (Tanpa /user/)
-    if err != nil || res["success"] != true {
-        log.Println("Fallback 1: Mencoba endpoint /genkey...")
-        res, err = apiCall("POST", "/genkey", map[string]interface{}{
-            "password": username,
-        })
-    }
-
-    if err != nil {
-        sendMessage(bot, chatID, "❌ Error Koneksi API: "+err.Error())
-        showMainMenu(bot, chatID)
-        return
-    }
-
-    if res["success"] != true {
-        msg, _ := res["message"].(string)
-        if msg == "" {
-            msg = "Gagal generate key (API Success: false)"
-        }
-        sendMessage(bot, chatID, "❌ "+msg)
-        showMainMenu(bot, chatID)
-        return
-    }
-
-    data, ok := res["data"].(map[string]interface{})
-    if !ok {
-        sendMessage(bot, chatID, "❌ Format data respons API tidak valid (bukan map).")
-        showMainMenu(bot, chatID)
-        return
-    }
-
-    // 3. Coba cari field link di berbagai nama variabel yang umum
-    var keyLink string
-    fieldsToCheck := []string{"link", "subscription", "subscription_url", "key", "url", "vmess", "vless", "ss", "trojan"}
-
-    for _, field := range fieldsToCheck {
-        if val, ok := data[field].(string); ok && val != "" {
-            keyLink = val
-            break
-        }
-    }
-
-    // 4. Jika ditemukan link
-    if keyLink != "" {
-        msg := fmt.Sprintf("🔑 *GENERATED KEY / SUBSCRIPTION LINK*\n\n"+
-            "User: `%s`\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-            "`%s`\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-            "Silakan copy link di atas dan import ke aplikasi V2Ray/v2rayNG/Clash.",
-            username, keyLink)
-
-        reply := tgbotapi.NewMessage(chatID, msg)
-        reply.ParseMode = "Markdown"
-        deleteLastMessage(bot, chatID)
-        bot.Send(reply)
-        showMainMenu(bot, chatID)
-        return
-    }
-
-    // 5. Jika TIDAK ditemukan link: Kirim Raw JSON untuk Debug
-    // Ini penting agar kita tahu apa yang dikembalikan API panel Anda
-    jsonBytes, _ := json.MarshalIndent(data, "", "  ")
-    
-    sendMessage(bot, chatID, "⚠️ API berhasil (Success), tapi bot tidak bisa menemukan Link/Subscription Key.\n\n"+
-        "**Raw Data dari Server:**\n```json\n"+string(jsonBytes)+"\n```\n\n"+
-        "Harap kirim data ini kepada developer agar bot dapat disesuaikan dengan panel Anda.")
-    
-    showMainMenu(bot, chatID)
-}
-
 // --- FITUR BACKUP & RESTORE (FINAL VERSION) ---
 
 func saveBackupToFile() (string, error) {
     log.Println("=== [DEBUG 1] Memulai saveBackupToFile ===")
 
+    // 1. Cek dan Buat Folder Backup jika belum ada
     if err := os.MkdirAll(BackupDir, 0755); err != nil {
         log.Printf("❌ [DEBUG 2] Gagal membuat folder %s: %v", BackupDir, err)
         return "", fmt.Errorf("gagal membuat folder backup: %v", err)
     }
     log.Printf("✅ [DEBUG 3] Folder %s siap/ditemukan.", BackupDir)
 
+    // 2. Ambil Data User
     users, err := getUsers()
     if err != nil {
         log.Printf("❌ [DEBUG 4] Gagal getUsers: %v", err)
@@ -748,6 +656,7 @@ func saveBackupToFile() (string, error) {
     }
     log.Printf("✅ [DEBUG 6] Berhasil ambil %d user.", len(users))
 
+    // 3. Ambil Info Domain
     domain := "Unknown"
     if res, err := apiCall("GET", "/info", nil); err == nil && res["success"] == true {
         if data, ok := res["data"].(map[string]interface{}); ok {
@@ -761,22 +670,26 @@ func saveBackupToFile() (string, error) {
         users[i].Host = domain
     }
 
+    // 4. Tentukan Path File (Nama Statis Tanpa Tanggal)
     filename := "backup_users.json"
     fullPath := filepath.Join(BackupDir, filename)
 
     log.Printf("✅ [DEBUG 7] Path tujuan file: %s", fullPath)
 
+    // 5. Marshal Data
     data, err := json.MarshalIndent(users, "", "  ")
     if err != nil {
         log.Printf("❌ [DEBUG 8] Gagal marshal JSON: %v", err)
         return "", fmt.Errorf("gagal marshal data: %v", err)
     }
 
+    // 6. Tulis ke File (Write)
     if err := os.WriteFile(fullPath, data, 0644); err != nil {
         log.Printf("❌ [DEBUG 9] GAGAL WRITE FILE (Permission?): %v", err)
         return "", fmt.Errorf("GAGAL MENULIS FILE KE DISK: %v\nPastikan bot memiliki akses tulis ke folder: %s", err, BackupDir)
     }
 
+    // 7. Cek apakah file benar-benar terbuat
     if _, err := os.Stat(fullPath); err != nil {
         log.Printf("❌ [DEBUG 10] File tidak ditemukan setelah write: %v", err)
         return "", fmt.Errorf("file tidak ditemukan setelah write: %v", err)
@@ -804,6 +717,7 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
     log.Println("=== [DEBUG START] Perintah Backup Manual Diterima ===")
     sendMessage(bot, chatID, "⏳ Sedang memproses backup...")
 
+    // 1. Panggil fungsi simpan file
     filePath, err := saveBackupToFile()
     if err != nil {
         log.Printf("❌ [DEBUG END] Gagal di saveBackupToFile: %v", err)
@@ -811,6 +725,7 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
         return
     }
 
+    // 2. Cek info file (Ukuran & Keberadaan)
     fileInfo, err := os.Stat(filePath)
     if os.IsNotExist(err) {
         log.Printf("❌ [DEBUG] File hilang setelah dibuat: %s", filePath)
@@ -820,6 +735,7 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
 
     log.Printf("✅ [DEBUG] File Info - Path: %s, Size: %d bytes", filePath, fileInfo.Size())
 
+    // 3. Cek Limit Telegram (50MB)
     if fileInfo.Size() > (50 * 1024 * 1024) {
         sizeInMb := fileInfo.Size() / 1024 / 1024
         sendMessage(bot, chatID, fmt.Sprintf("❌ **GAGAL KIRIM**\n\nFile terlalu besar: **%d MB**.\nLimit Telegram: 50 MB.\n\nAmbil file manual di server:\n`%s`", sizeInMb, filePath))
@@ -827,6 +743,7 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
         return
     }
 
+    // 4. Kirim ke Telegram
     log.Println("✅ [DEBUG] Mencoba mengirim file ke Telegram...")
 
     doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(filePath))
