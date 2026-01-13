@@ -26,9 +26,12 @@ const (
     // !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
     MenuPhotoURL = "https://h.uguu.se/NgaOrSxG.png"
 
+    // Interval untuk pengecekan dan penghapusan akun expired
     AutoDeleteInterval = 1 * time.Minute
+    // Interval untuk Auto Backup (6 Jam)
     AutoBackupInterval = 6 * time.Hour
     
+    // Konfigurasi Backup dan Service
     BackupDir   = "/etc/zivpn/backups"
     ServiceName = "zivpn" 
 )
@@ -46,7 +49,7 @@ type IpInfo struct {
 }
 
 type UserData struct {
-    Host     string `json:"host"` // Field tambahan untuk backup
+    Host     string `json:"host"` // Host untuk backup
     Password string `json:"password"`
     Expired  string `json:"expired"`
     Status   string `json:"status"`
@@ -55,14 +58,6 @@ type UserData struct {
 var userStates = make(map[int64]string)
 var tempUserData = make(map[int64]map[string]string)
 var lastMessageIDs = make(map[int64]int)
-
-// Helper untuk amankan string dari map interface
-func getStringFromMap(m map[string]interface{}, key string) string {
-    if val, ok := m[key]; ok {
-        return fmt.Sprintf("%v", val)
-    }
-    return "Unknown"
-}
 
 func main() {
     rand.NewSource(time.Now().UnixNano())
@@ -89,12 +84,6 @@ func main() {
 
     // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS) ---
     go func() {
-        // Tambahkan recover agar background worker tidak crash
-        defer func() {
-            if r := recover(); r != nil {
-                log.Printf("AutoDelete Recovered from panic: %v", r)
-            }
-        }()
         autoDeleteExpiredUsers(bot, config.AdminID, false) 
         ticker := time.NewTicker(AutoDeleteInterval)
         for range ticker.C {
@@ -104,11 +93,6 @@ func main() {
 
     // --- BACKGROUND WORKER (AUTO BACKUP) ---
     go func() {
-        defer func() {
-            if r := recover(); r != nil {
-                log.Printf("AutoBackup Recovered from panic: %v", r)
-            }
-        }()
         performAutoBackup(bot, config.AdminID)
         ticker := time.NewTicker(AutoBackupInterval)
         for range ticker.C {
@@ -118,23 +102,15 @@ func main() {
 
     u := tgbotapi.NewUpdate(0)
     u.Timeout = 60
+
     updates := bot.GetUpdatesChan(u)
 
     for update := range updates {
-        // Recover jika ada panic di main loop
-        func() {
-            defer func() {
-                if r := recover(); r != nil {
-                    log.Printf("Main Loop Recovered from panic: %v", r)
-                }
-            }()
-
-            if update.Message != nil {
-                handleMessage(bot, update.Message, config.AdminID)
-            } else if update.CallbackQuery != nil {
-                handleCallback(bot, update.CallbackQuery, config.AdminID)
-            }
-        }()
+        if update.Message != nil {
+            handleMessage(bot, update.Message, config.AdminID)
+        } else if update.CallbackQuery != nil {
+            handleCallback(bot, update.CallbackQuery, config.AdminID)
+        }
     }
 }
 
@@ -147,13 +123,14 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 
     state, exists := userStates[msg.From.ID]
     
+    // Handle Restore dari Upload File (Fitur tambahan tapi tetap)
     if exists && state == "wait_restore_file" {
         if msg.Document != nil {
             handleRestoreFromUpload(bot, msg)
         } else {
-            sendMessage(bot, msg.Chat.ID, "❌ Mohon kirimkan file backup (.json), bukan teks.")
+            sendMessage(bot, msg.Chat.ID, "❌ Mohon kirimkan file backup (.json).")
         }
-        // Jangan reset state jika gagal upload, biarkan coba lagi
+        // Jangan reset state jika gagal
         return
     }
 
@@ -203,11 +180,13 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     case query.Data == "menu_info":
         systemInfo(bot, query.Message.Chat.ID)
     
+    // --- MENU BACKUP, RESTORE, CLEAN ---
     case query.Data == "menu_backup":
         performManualBackup(bot, query.Message.Chat.ID)
     case query.Data == "menu_restore":
+        // Tampilkan menu restore (Upload File) dengan tombol Batal
         userStates[query.From.ID] = "wait_restore_file"
-        msg := tgbotapi.NewMessage(query.Message.Chat.ID, "📥 *RESTORE DARI FILE*\n\nSilakan kirimkan file backup `.json` Anda.\n\nBot akan otomatis membuat ulang akun yang ada di dalam file tersebut.")
+        msg := tgbotapi.NewMessage(query.Message.Chat.ID, "📥 *RESTORE DATA*\n\nSilakan kirimkan file backup `.json` Anda.\n\nBot akan otomatis membuat ulang akun yang ada di dalam file tersebut.")
         msg.ParseMode = "Markdown"
         msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
             tgbotapi.NewInlineKeyboardRow(
@@ -217,6 +196,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         sendAndTrack(bot, msg)
     case query.Data == "menu_clean_restart":
         cleanAndRestartService(bot, query.Message.Chat.ID)
+    // -------------------------------------
 
     case query.Data == "cancel":
         delete(userStates, query.From.ID)
@@ -281,8 +261,6 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
     }
 }
 
-// --- FITUR RESTORE DARI UPLOAD FILE ---
-
 func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
     resetState(msg.From.ID) 
     sendMessage(bot, msg.Chat.ID, "⏳ Sedang mengunduh dan memproses file backup...")
@@ -340,7 +318,6 @@ func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
         }
 
         if !parsed {
-            log.Printf("Restore: Gagal parse tanggal %s - %s", u.Password, u.Expired)
             failedCount++
             failedUsers = append(failedUsers, u.Password)
             continue
@@ -360,7 +337,6 @@ func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
         })
 
         if err != nil {
-            log.Printf("Restore: API Error %s: %v", u.Password, err)
             failedCount++
             failedUsers = append(failedUsers, u.Password)
         } else if res["success"] == true {
@@ -396,8 +372,6 @@ func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
     sendMessage(bot, msg.Chat.ID, msgResult)
     showMainMenu(bot, msg.Chat.ID)
 }
-
-// --- FUNGSI LAINNYA ---
 
 func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action string) {
     users, err := getUsers()
@@ -473,9 +447,10 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
     domain := "Unknown"
 
     if res, err := apiCall("GET", "/info", nil); err == nil && res["success"] == true {
-        // AMANKAN DATA ACCESS
         if data, ok := res["data"].(map[string]interface{}); ok {
-            domain = getStringFromMap(data, "domain")
+            if d, ok := data["domain"].(string); ok {
+                domain = d
+            }
         }
     }
 
@@ -497,6 +472,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         }
     }
 
+    // --- TAMPILAN MENU ASLI (DIKEMBALIKAN) ---
     msgText := fmt.Sprintf("✨ *WELCOME TO BOT PGETUNNEL UDP ZIVPN*\n\n" +
         "Server Info:\n" +
         "•  🌐 *Domain*: `%s`\n" +
@@ -601,7 +577,7 @@ func generateRandomPassword(length int) string {
     return string(b)
 }
 
-// --- BACKUP & CLEAN FUNCTIONS ---
+// --- FITUR BACKUP & RESTORE ---
 
 func performAutoBackup(bot *tgbotapi.BotAPI, adminID int64) {
     filePath, err := saveBackupToFile()
@@ -645,7 +621,9 @@ func saveBackupToFile() (string, error) {
     domain := "Unknown"
     if res, err := apiCall("GET", "/info", nil); err == nil && res["success"] == true {
         if data, ok := res["data"].(map[string]interface{}); ok {
-            domain = getStringFromMap(data, "domain")
+            if d, ok := data["domain"].(string); ok {
+                domain = d
+            }
         }
     }
 
@@ -748,7 +726,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
     }
 }
 
-// --- API Calls & Helpers ---
+// --- API Calls (DIPERBAIKI: DITAMBAHKAN TIMEOUT) ---
 
 func apiCall(method, endpoint string, payload interface{}) (map[string]interface{}, error) {
     var reqBody []byte
@@ -761,7 +739,11 @@ func apiCall(method, endpoint string, payload interface{}) (map[string]interface
         }
     }
 
-    client := &http.Client{}
+    // !!! FIX PALING PENTING !!!
+    // Client HTTP diberi batas waktu (Timeout) 5 detik.
+    // Jadi jika API Panel lemot, bot tidak akan macet/biang (hang).
+    client := &http.Client{Timeout: 5 * time.Second}
+
     req, err := http.NewRequest(method, ApiUrl+endpoint, bytes.NewBuffer(reqBody))
     if err != nil {
         return nil, err
@@ -809,7 +791,6 @@ func getUsers() ([]UserData, error) {
 
     var users []UserData
     
-    // AMANKAN DATA SLICE
     if dataSlice, ok := res["data"].([]interface{}); ok {
         dataBytes, err := json.Marshal(dataSlice)
         if err != nil {
@@ -866,8 +847,6 @@ func getNearExpiredUsers() ([]UserData, error) {
     return nearExpired, nil
 }
 
-// --- CREATE USER / TRIAL / RENEW / DELETE / LIST ---
-
 func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
     res, err := apiCall("POST", "/user/create", map[string]interface{}{
         "password": username,
@@ -880,13 +859,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
     }
 
     if res["success"] == true {
-        // AMANKAN DATA MAP
-        data, ok := res["data"].(map[string]interface{})
-        if !ok {
-            sendMessage(bot, chatID, "❌ Gagal: Format data respons dari API tidak valid.")
-            showMainMenu(bot, chatID)
-            return
-        }
+        data := res["data"].(map[string]interface{})
         ipInfo, _ := getIpInfo()
 
         msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT*\n" +
@@ -900,7 +873,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
           "🔒 *Private Tidak Digunakan User Lain*\n"+
           "⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━",
-            getStringFromMap(data, "password"), getStringFromMap(data, "domain"), getStringFromMap(data, "expired"), ipInfo.City, ipInfo.Isp)
+            data["password"], data["domain"], data["expired"], ipInfo.City, ipInfo.Isp)
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
@@ -908,9 +881,9 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
         bot.Send(reply)
         showMainMenu(bot, chatID)
     } else {
-        errMsg, _ := res["message"].(string)
-        if errMsg == "" {
-            errMsg = "Pesan error tidak diketahui."
+        errMsg, ok := res["message"].(string)
+        if !ok {
+            errMsg = "Pesan error tidak diketahui dari API."
         }
         sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", errMsg))
         showMainMenu(bot, chatID)
@@ -940,12 +913,28 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
         }
 
         ipInfo, _ := getIpInfo()
-        password := getStringFromMap(data, "password")
-        expired := getStringFromMap(data, "expired")
-        domain := getStringFromMap(data, "domain")
 
-        if domain == "Unknown" || domain == "" {
-            domain = "N/A"
+        password := "N/A"
+        if p, ok := data["password"].(string); ok {
+            password = p
+        }
+
+        expired := "N/A"
+        if e, ok := data["expired"].(string); ok {
+            expired = e
+        }
+
+        domain := "Unknown"
+        if d, ok := data["domain"].(string); ok && d != "" {
+            domain = d
+        } else {
+            if infoRes, err := apiCall("GET", "/info", nil); err == nil && infoRes["success"] == true {
+                if infoData, ok := infoRes["data"].(map[string]interface{}); ok {
+                    if d, ok := infoData["domain"].(string); ok {
+                        domain = d
+                    }
+                }
+            }
         }
 
         msg := fmt.Sprintf("🚀 *AKUN %d HARI BERHASIL DIBUAT*\n" +
@@ -969,8 +958,8 @@ func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
         bot.Send(reply)
         showMainMenu(bot, chatID)
     } else {
-        errMsg, _ := res["message"].(string)
-        if errMsg == "" {
+        errMsg, ok := res["message"].(string)
+        if !ok {
             errMsg = "Respon kegagalan dari API tidak diketahui."
         }
         sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal membuat Trial: %s", errMsg))
@@ -995,8 +984,8 @@ func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
         bot.Send(msg)
         showMainMenu(bot, chatID)
     } else {
-        errMsg, _ := res["message"].(string)
-        if errMsg == "" {
+        errMsg, ok := res["message"].(string)
+        if !ok {
             errMsg = "Pesan error tidak diketahui dari API."
         }
         sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal menghapus: %s", errMsg))
@@ -1016,17 +1005,20 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
     }
 
     if res["success"] == true {
-        data, ok := res["data"].(map[string]interface{})
-        if !ok {
-            sendMessage(bot, chatID, "❌ Gagal: Format data respons dari API tidak valid.")
-            showMainMenu(bot, chatID)
-            return
-        }
+        data := res["data"].(map[string]interface{})
         ipInfo, _ := getIpInfo()
 
-        domain := getStringFromMap(data, "domain")
-        if domain == "Unknown" || domain == "" {
-            domain = "N/A"
+        domain := "Unknown"
+        if d, ok := data["domain"].(string); ok && d != "" {
+            domain = d
+        } else {
+            if infoRes, err := apiCall("GET", "/info", nil); err == nil && infoRes["success"] == true {
+                if infoData, ok := infoRes["data"].(map[string]interface{}); ok {
+                    if d, ok := infoData["domain"].(string); ok {
+                        domain = d
+                    }
+                }
+            }
         }
 
         msg := fmt.Sprintf("✅ *AKUN BERHASIL DIPERPANJANG* (%d Hari)\n" +
@@ -1037,7 +1029,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
             "📍 *Lokasi Server*: `%s`\n" +
             "📡 *ISP Server*: `%s`\n" +
             "━━━━━━━━━━━━━━━━━━━━━━━━━",
-            days, getStringFromMap(data, "password"), domain, getStringFromMap(data, "expired"), ipInfo.City, ipInfo.Isp)
+            days, data["password"], domain, data["expired"], ipInfo.City, ipInfo.Isp)
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
@@ -1045,8 +1037,8 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
         bot.Send(reply)
         showMainMenu(bot, chatID)
     } else {
-        errMsg, _ := res["message"].(string)
-        if errMsg == "" {
+        errMsg, ok := res["message"].(string)
+        if !ok {
             errMsg = "Pesan error tidak diketahui dari API."
         }
         sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal memperpanjang: %s", errMsg))
@@ -1062,30 +1054,21 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
     }
 
     if res["success"] == true {
-        // AMANKAN DATA SLICE
-        usersInterface, ok := res["data"].([]interface{})
-        if !ok {
-            sendMessage(bot, chatID, "❌ Gagal memformat data user.")
-            return
-        }
-        
-        if len(usersInterface) == 0 {
+        users := res["data"].([]interface{})
+        if len(users) == 0 {
             sendMessage(bot, chatID, "📂 Tidak ada user saat ini.")
             showMainMenu(bot, chatID)
             return
         }
 
-        msg := fmt.Sprintf("📋 *DAFTAR AKUN ZIVPN* (Total: %d)\n\n", len(usersInterface))
-        for i, u := range usersInterface {
-            user, ok := u.(map[string]interface{})
-            if !ok { continue }
-            
+        msg := fmt.Sprintf("📋 *DAFTAR AKUN ZIVPN* (Total: %d)\n\n", len(users))
+        for i, u := range users {
+            user := u.(map[string]interface{})
             statusIcon := "🟢"
-            status := getStringFromMap(user, "status")
-            if status == "Expired" {
+            if user["status"] == "Expired" {
                 statusIcon = "🔴"
             }
-            msg += fmt.Sprintf("%d. %s `%s`\n    _Kadaluarsa: %s_\n", i+1, statusIcon, getStringFromMap(user, "password"), getStringFromMap(user, "expired"))
+            msg += fmt.Sprintf("%d. %s `%s`\n    _Kadaluarsa: %s_\n", i+1, statusIcon, user["password"], user["expired"])
         }
 
         reply := tgbotapi.NewMessage(chatID, msg)
@@ -1104,11 +1087,7 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
     }
 
     if res["success"] == true {
-        data, ok := res["data"].(map[string]interface{})
-        if !ok {
-            sendMessage(bot, chatID, "❌ Gagal mengambil info sistem.")
-            return
-        }
+        data := res["data"].(map[string]interface{})
         ipInfo, _ := getIpInfo()
 
         msg := fmt.Sprintf("⚙️ *INFORMASI DETAIL SERVER*\n" +
@@ -1120,7 +1099,7 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
             "📍 *Lokasi Server*: `%s`\n" +
             "📡 *ISP Server*: `%s`\n" +
             "━━━━━━━━━━━━━━━━━━━━━━━━━",
-            getStringFromMap(data, "domain"), getStringFromMap(data, "public_ip"), getStringFromMap(data, "port"), getStringFromMap(data, "service"), ipInfo.City, ipInfo.Isp)
+            data["domain"], data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp)
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
