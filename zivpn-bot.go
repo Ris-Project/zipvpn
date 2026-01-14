@@ -571,24 +571,15 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         totalUsers = len(users)
     }
 
-    // --- AMBIL DATA TAMBAHAN (OS, CPU, RAM) ---
-    osInfo := getOSInfo()
-    ramInfo := getRAMUsage()
-    cpuInfo := getCPULoad()
-    // ---------------------------------------------
-
     msgText := fmt.Sprintf("✨ *WELCOME TO BOT PGETUNNEL UDP ZIVPN*\n\n"+
         "Server Info:\n"+
         "•  🌐 *Domain*: `%s`\n"+
         "•  📍 *Lokasi*: `%s`\n"+
         "•  📡 *ISP*: `%s`\n"+
-        "•  👤 *Total Akun*: `%d`\n"+
-        "•  💻 *OS*: `%s`\n"+
-        "•  ⚡ *CPU Load*: `%s`\n"+
-        "•  🧠 *RAM*: `%s`\n\n"+
+        "•  👤 *Total Akun*: `%d`\n\n"+
         "Untuk bantuan, hubungi Admin: @JesVpnt\n\n"+
         "Silakan pilih menu di bawah ini:",
-        domain, ipInfo.City, ipInfo.Isp, totalUsers, osInfo, cpuInfo, ramInfo)
+        domain, ipInfo.City, ipInfo.Isp, totalUsers)
 
     deleteLastMessage(bot, chatID)
 
@@ -943,66 +934,6 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
     }
 }
 
-// --- HELPER FUNGSI UNTUK INFO SISTEM (OS, RAM, CPU) ---
-
-func getOSInfo() string {
-    cmd := exec.Command("uname", "-sr")
-    out, err := cmd.CombinedOutput()
-    if err != nil {
-        return "Unknown"
-    }
-    return strings.TrimSpace(string(out))
-}
-
-func getRAMUsage() string {
-    data, err := os.ReadFile("/proc/meminfo")
-    if err != nil {
-        return "Error"
-    }
-
-    lines := strings.Split(string(data), "\n")
-    var total, available int
-
-    for _, line := range lines {
-        fields := strings.Fields(line)
-        if len(fields) < 2 {
-            continue
-        }
-        if fields[0] == "MemTotal:" {
-            val, _ := strconv.Atoi(fields[1])
-            total = val
-        } else if fields[0] == "MemAvailable:" {
-            val, _ := strconv.Atoi(fields[1])
-            available = val
-        }
-    }
-
-    if total == 0 {
-        return "Error"
-    }
-
-    used := total - available
-    
-    usedGB := float64(used) / 1024 / 1024
-    totalGB := float64(total) / 1024 / 1024
-
-    return fmt.Sprintf("%.2f GB / %.2f GB", usedGB, totalGB)
-}
-
-func getCPULoad() string {
-    data, err := os.ReadFile("/proc/loadavg")
-    if err != nil {
-        return "Error"
-    }
-
-    parts := strings.Fields(string(data))
-    if len(parts) >= 3 {
-        return fmt.Sprintf("%s (1m), %s (5m), %s (15m)", parts[0], parts[1], parts[2])
-    }
-
-    return "Error"
-}
-
 // --- API Calls ---
 
 func apiCall(method, endpoint string, payload interface{}) (map[string]interface{}, error) {
@@ -1152,7 +1083,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
             "🔑 *Password*: `%s`\n"+
             "🌐 *Domain*: `%s`\n"+
-            "🗓️ *Kadaluarsa*: `%s`\n"+
+            "🗓️ *Expired*: `%s`\n"+
             "🔢 *Limit IP*: `%d`\n"+
             "💾 *Limit Kuota*: `%d GB`\n"+
             "📍 *Lokasi Server*: `%s`\n"+
@@ -1243,7 +1174,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, li
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
             "🔑 *Password*: `%s`\n"+
             "🌐 *Domain*: `%s`\n"+
-            "🗓️ *Kadaluarsa Baru*: `%s`\n"+
+            "🗓️ *Expired Baru*: `%s`\n"+
             "🔢 *Limit IP*: `%d`\n"+
             "💾 *Limit Kuota*: `%d GB`\n"+
             "📍 *Lokasi Server*: `%s`\n"+
@@ -1324,12 +1255,6 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 
         ipInfo, _ := getIpInfo()
 
-        // --- AMBIL DATA TAMBAHAN (OS, RAM, CPU) ---
-        osInfo := getOSInfo()
-        ramInfo := getRAMUsage()
-        cpuInfo := getCPULoad()
-        // ---------------------------------------------
-
         msg := fmt.Sprintf("⚙️ *INFORMASI DETAIL SERVER*\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
             "🌐 *Domain*: `%s`\n"+
@@ -1338,12 +1263,8 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
             "🔧 *Layanan*: `%s`\n"+
             "📍 *Lokasi Server*: `%s`\n"+
             "📡 *ISP Server*: `%s`\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-            "💻 *OS*: `%s`\n"+
-            "⚡ *CPU Load*: `%s`\n"+
-            "🧠 *RAM Usage*: `%s`\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━",
-            data["domain"], data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp, osInfo, cpuInfo, ramInfo)
+            data["domain"], data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp)
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
