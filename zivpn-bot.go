@@ -164,16 +164,6 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     callbackData := query.Data
 
     switch {
-    case callbackData == "menu_trial_1":
-        createGenericTrialUser(bot, query.Message.Chat.ID, 1)
-    case callbackData == "menu_trial_15":
-        createGenericTrialUser(bot, query.Message.Chat.ID, 15)
-    case callbackData == "menu_trial_30":
-        createGenericTrialUser(bot, query.Message.Chat.ID, 30)
-    case callbackData == "menu_trial_60":
-        createGenericTrialUser(bot, query.Message.Chat.ID, 60)
-    case callbackData == "menu_trial_90":
-        createGenericTrialUser(bot, query.Message.Chat.ID, 90)
     case callbackData == "menu_create":
         setState(query.From.ID, "create_username")
         setTempData(query.From.ID, make(map[string]string))
@@ -213,8 +203,8 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     case strings.HasPrefix(callbackData, "select_renew:"):
         username := strings.TrimPrefix(callbackData, "select_renew:")
         setTempData(query.From.ID, map[string]string{"username": username})
-        setState(query.From.ID, "renew_days")
-        sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("🔄 *MENU RENEW*\nUser: `%s`\nMasukkan tambahan durasi (*Hari*):", username))
+        setState(query.From.ID, "renew_limit_ip")
+        sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("🔄 *MENU RENEW*\nUser: `%s`\n\nMasukkan **Limit IP** (0 untuk Unlimited):", username))
     case strings.HasPrefix(callbackData, "select_delete:"):
         username := strings.TrimPrefix(callbackData, "select_delete:")
         msg := tgbotapi.NewMessage(query.Message.Chat.ID, fmt.Sprintf("❓ *KONFIRMASI HAPUS*\nAnda yakin ingin menghapus user `%s`?", username))
@@ -241,8 +231,32 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
     switch state {
     case "create_username":
         setTempData(userID, map[string]string{"username": text})
+        setState(userID, "create_limit_ip")
+        sendMessage(bot, msg.Chat.ID, fmt.Sprintf("🔑 *CREATE USER*\nPassword: `%s`\n\nMasukkan **Limit IP** (0 untuk Unlimited):", text))
+
+    case "create_limit_ip":
+        if _, err := strconv.Atoi(text); err != nil {
+            sendMessage(bot, msg.Chat.ID, "❌ Limit IP harus berupa angka. Coba lagi:")
+            return
+        }
+        data := getTempData(userID)
+        data["limit_ip"] = text
+        setTempData(userID, data)
+        
+        setState(userID, "create_limit_quota")
+        sendMessage(bot, msg.Chat.ID, "💾 *CREATE USER*\n\nMasukkan **Limit Kuota** dalam GB (0 untuk Unlimited):")
+
+    case "create_limit_quota":
+        if _, err := strconv.Atoi(text); err != nil {
+            sendMessage(bot, msg.Chat.ID, "❌ Limit Kuota harus berupa angka. Coba lagi:")
+            return
+        }
+        data := getTempData(userID)
+        data["limit_quota"] = text
+        setTempData(userID, data)
+        
         setState(userID, "create_days")
-        sendMessage(bot, msg.Chat.ID, fmt.Sprintf("⏳ *CREATE USER*\nPassword: `%s`\nMasukkan **Durasi** (*Hari*) pembuatan:", text))
+        sendMessage(bot, msg.Chat.ID, "📅 *CREATE USER*\n\nMasukkan **Durasi** (*Hari*) pembuatan:")
 
     case "create_days":
         days, err := strconv.Atoi(text)
@@ -250,18 +264,43 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             sendMessage(bot, msg.Chat.ID, "❌ Durasi harus angka. Coba lagi:")
             return
         }
-        stateMutex.RLock()
-        data, ok := tempUserData[userID]
-        stateMutex.RUnlock()
-
+        
+        data, ok := getTempData(userID)
         if !ok {
             sendMessage(bot, msg.Chat.ID, "❌ Sesi berakhir. Silakan mulai dari awal.")
             resetState(userID)
             return
         }
 
-        createUser(bot, msg.Chat.ID, data["username"], days)
+        limitIP, _ := strconv.Atoi(data["limit_ip"])
+        limitQuota, _ := strconv.Atoi(data["limit_quota"])
+
+        createUser(bot, msg.Chat.ID, data["username"], days, limitIP, limitQuota)
         resetState(userID)
+
+    case "renew_limit_ip":
+        if _, err := strconv.Atoi(text); err != nil {
+            sendMessage(bot, msg.Chat.ID, "❌ Limit IP harus berupa angka. Coba lagi:")
+            return
+        }
+        data := getTempData(userID)
+        data["limit_ip"] = text
+        setTempData(userID, data)
+        
+        setState(userID, "renew_limit_quota")
+        sendMessage(bot, msg.Chat.ID, "💾 *MENU RENEW*\n\nMasukkan **Limit Kuota** dalam GB (0 untuk Unlimited):")
+
+    case "renew_limit_quota":
+        if _, err := strconv.Atoi(text); err != nil {
+            sendMessage(bot, msg.Chat.ID, "❌ Limit Kuota harus berupa angka. Coba lagi:")
+            return
+        }
+        data := getTempData(userID)
+        data["limit_quota"] = text
+        setTempData(userID, data)
+        
+        setState(userID, "renew_days")
+        sendMessage(bot, msg.Chat.ID, "📅 *MENU RENEW*\n\nMasukkan tambahan **Durasi** (*Hari*):")
 
     case "renew_days":
         days, err := strconv.Atoi(text)
@@ -270,19 +309,26 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             return
         }
 
-        stateMutex.RLock()
-        data, ok := tempUserData[userID]
-        stateMutex.RUnlock()
-
+        data, ok := getTempData(userID)
         if !ok {
             sendMessage(bot, msg.Chat.ID, "❌ Sesi berakhir. Silakan mulai dari awal.")
             resetState(userID)
             return
         }
 
-        renewUser(bot, msg.Chat.ID, data["username"], days)
+        limitIP, _ := strconv.Atoi(data["limit_ip"])
+        limitQuota, _ := strconv.Atoi(data["limit_quota"])
+
+        renewUser(bot, msg.Chat.ID, data["username"], days, limitIP, limitQuota)
         resetState(userID)
     }
+}
+
+func getTempData(userID int64) (map[string]string, bool) {
+    stateMutex.RLock()
+    defer stateMutex.RUnlock()
+    data, ok := tempUserData[userID]
+    return data, ok
 }
 
 func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
@@ -483,39 +529,30 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         totalUsers = len(users)
     }
 
-    // --- LOGIKA EXPIRED DIPISAH TAPI TIDAK DITAMPILKAN KE MSGTEXT ---
-    nearExpiredUsers, err := getNearExpiredUsers()
-    if err == nil && len(nearExpiredUsers) > 0 {
-        // Logika ini tetap berjalan di belakang layar jika Anda ingin menggunakannya di masa depan,
-        // tapi tidak ditambahkan ke pesan menu (msgText).
-        _ = nearExpiredUsers
-    }
-    // ------------------------------------------------------------------
+    // --- AMBIL DATA TAMBAHAN (OS, CPU, RAM) ---
+    osInfo := getOSInfo()
+    ramInfo := getRAMUsage()
+    cpuInfo := getCPULoad()
+    // ---------------------------------------------
 
     msgText := fmt.Sprintf("✨ *WELCOME TO BOT PGETUNNEL UDP ZIVPN*\n\n"+
         "Server Info:\n"+
         "•  🌐 *Domain*: `%s`\n"+
         "•  📍 *Lokasi*: `%s`\n"+
         "•  📡 *ISP*: `%s`\n"+
-        "•  👤 *Total Akun*: `%d`\n\n"+
+        "•  👤 *Total Akun*: `%d`\n"+
+        "•  💻 *OS*: `%s`\n"+
+        "•  ⚡ *CPU Load*: `%s`\n"+
+        "•  🧠 *RAM*: `%s`\n\n"+
         "Untuk bantuan, hubungi Admin: @JesVpnt\n\n"+
         "Silakan pilih menu di bawah ini:",
-        domain, ipInfo.City, ipInfo.Isp, totalUsers)
+        domain, ipInfo.City, ipInfo.Isp, totalUsers, osInfo, cpuInfo, ramInfo)
 
     deleteLastMessage(bot, chatID)
 
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun", "menu_create"),
-            tgbotapi.NewInlineKeyboardButtonData("🚀 Trial 1 Hari", "menu_trial_1"),
-        ),
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("⭐ Buat 15 Hari 6k", "menu_trial_15"),
-            tgbotapi.NewInlineKeyboardButtonData("🌟 Buat 30 Hari 12k", "menu_trial_30"),
-        ),
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("✨ Buat 60 Hari 24k", "menu_trial_60"),
-            tgbotapi.NewInlineKeyboardButtonData("🔥 Buat 90 Hari 35k", "menu_trial_90"),
         ),
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
@@ -570,8 +607,6 @@ func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
     sendAndTrack(bot, msg)
 }
 
-// --- Helper Functions for Safe Map Access ---
-
 func setState(userID int64, state string) {
     stateMutex.Lock()
     defer stateMutex.Unlock()
@@ -617,8 +652,6 @@ func sendAndTrack(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig) {
     }
 }
 
-// --- END Helpers ---
-
 func generateRandomPassword(length int) string {
     const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     b := make([]byte, length)
@@ -628,19 +661,15 @@ func generateRandomPassword(length int) string {
     return string(b)
 }
 
-// --- FITUR BACKUP & RESTORE (FINAL VERSION) ---
-
 func saveBackupToFile() (string, error) {
     log.Println("=== [DEBUG 1] Memulai saveBackupToFile ===")
 
-    // 1. Cek dan Buat Folder Backup jika belum ada
     if err := os.MkdirAll(BackupDir, 0755); err != nil {
         log.Printf("❌ [DEBUG 2] Gagal membuat folder %s: %v", BackupDir, err)
         return "", fmt.Errorf("gagal membuat folder backup: %v", err)
     }
     log.Printf("✅ [DEBUG 3] Folder %s siap/ditemukan.", BackupDir)
 
-    // 2. Ambil Data User
     users, err := getUsers()
     if err != nil {
         log.Printf("❌ [DEBUG 4] Gagal getUsers: %v", err)
@@ -653,7 +682,6 @@ func saveBackupToFile() (string, error) {
     }
     log.Printf("✅ [DEBUG 6] Berhasil ambil %d user.", len(users))
 
-    // 3. Ambil Info Domain
     domain := "Unknown"
     if res, err := apiCall("GET", "/info", nil); err == nil && res["success"] == true {
         if data, ok := res["data"].(map[string]interface{}); ok {
@@ -667,26 +695,22 @@ func saveBackupToFile() (string, error) {
         users[i].Host = domain
     }
 
-    // 4. Tentukan Path File (Nama Statis Tanpa Tanggal)
     filename := "backup_users.json"
     fullPath := filepath.Join(BackupDir, filename)
 
     log.Printf("✅ [DEBUG 7] Path tujuan file: %s", fullPath)
 
-    // 5. Marshal Data
     data, err := json.MarshalIndent(users, "", "  ")
     if err != nil {
         log.Printf("❌ [DEBUG 8] Gagal marshal JSON: %v", err)
         return "", fmt.Errorf("gagal marshal data: %v", err)
     }
 
-    // 6. Tulis ke File (Write)
     if err := os.WriteFile(fullPath, data, 0644); err != nil {
         log.Printf("❌ [DEBUG 9] GAGAL WRITE FILE (Permission?): %v", err)
         return "", fmt.Errorf("GAGAL MENULIS FILE KE DISK: %v\nPastikan bot memiliki akses tulis ke folder: %s", err, BackupDir)
     }
 
-    // 7. Cek apakah file benar-benar terbuat
     if _, err := os.Stat(fullPath); err != nil {
         log.Printf("❌ [DEBUG 10] File tidak ditemukan setelah write: %v", err)
         return "", fmt.Errorf("file tidak ditemukan setelah write: %v", err)
@@ -701,37 +725,31 @@ func saveBackupToFile() (string, error) {
     return absPath, nil
 }
 
-// --- PERBAIKAN AUTO BACKUP (MENGIRIM KE TELEGRAM) ---
 func performAutoBackup(bot *tgbotapi.BotAPI, adminID int64) {
     log.Println("🔄 [AutoBackup] Memulai proses backup otomatis...")
 
-    // 1. Simpan file ke disk
     filePath, err := saveBackupToFile()
     if err != nil {
         log.Printf("❌ [AutoBackup] Gagal menyimpan file ke disk: %v", err)
         return
     }
 
-    // 2. Cek info file (Ukuran & Keberadaan)
     fileInfo, err := os.Stat(filePath)
     if err != nil {
         log.Printf("❌ [AutoBackup] Gagal membaca file info: %v", err)
         return
     }
 
-    // 3. Cek Limit Telegram (50MB)
     if fileInfo.Size() > (50 * 1024 * 1024) {
         sizeInMb := fileInfo.Size() / 1024 / 1024
         log.Printf("⚠️ [AutoBackup] File terlalu besar (%d MB), melebihi limit Telegram.", sizeInMb)
         
-        // Kirim pesan peringatan teks jika file terlalu besar
         msg := tgbotapi.NewMessage(adminID, fmt.Sprintf("⚠️ *Auto Backup Gagal Terkirim*\n\nFile backup terlalu besar: **%d MB**.\nLimit Telegram: 50 MB.\n\nFile tersimpan di server:\n`%s`", sizeInMb, filePath))
         msg.ParseMode = "Markdown"
         bot.Send(msg)
         return
     }
 
-    // 4. Kirim File ke Telegram
     doc := tgbotapi.NewDocument(adminID, tgbotapi.FilePath(filePath))
     doc.Caption = fmt.Sprintf("💾 *AUTO BACKUP REPORT*\n📅 Waktu: `%s`\n📁 Ukuran: %.2f MB\n📂 Lokasi: `%s`",
         time.Now().Format("2006-01-02 15:04:05"),
@@ -746,13 +764,11 @@ func performAutoBackup(bot *tgbotapi.BotAPI, adminID int64) {
         log.Printf("✅ [AutoBackup] Berhasil dikirim ke Admin Telegram.")
     }
 }
-// --------------------------------------------------
 
 func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
     log.Println("=== [DEBUG START] Perintah Backup Manual Diterima ===")
     sendMessage(bot, chatID, "⏳ Sedang memproses backup...")
 
-    // 1. Panggil fungsi simpan file
     filePath, err := saveBackupToFile()
     if err != nil {
         log.Printf("❌ [DEBUG END] Gagal di saveBackupToFile: %v", err)
@@ -760,7 +776,6 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
         return
     }
 
-    // 2. Cek info file (Ukuran & Keberadaan)
     fileInfo, err := os.Stat(filePath)
     if os.IsNotExist(err) {
         log.Printf("❌ [DEBUG] File hilang setelah dibuat: %s", filePath)
@@ -770,7 +785,6 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
 
     log.Printf("✅ [DEBUG] File Info - Path: %s, Size: %d bytes", filePath, fileInfo.Size())
 
-    // 3. Cek Limit Telegram (50MB)
     if fileInfo.Size() > (50 * 1024 * 1024) {
         sizeInMb := fileInfo.Size() / 1024 / 1024
         sendMessage(bot, chatID, fmt.Sprintf("❌ **GAGAL KIRIM**\n\nFile terlalu besar: **%d MB**.\nLimit Telegram: 50 MB.\n\nAmbil file manual di server:\n`%s`", sizeInMb, filePath))
@@ -778,7 +792,6 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
         return
     }
 
-    // 4. Kirim ke Telegram
     log.Println("✅ [DEBUG] Mencoba mengirim file ke Telegram...")
 
     doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(filePath))
@@ -886,6 +899,66 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
             bot.Send(notification)
         }
     }
+}
+
+// --- HELPER FUNGSI UNTUK INFO SISTEM (OS, RAM, CPU) ---
+
+func getOSInfo() string {
+    cmd := exec.Command("uname", "-sr")
+    out, err := cmd.CombinedOutput()
+    if err != nil {
+        return "Unknown"
+    }
+    return strings.TrimSpace(string(out))
+}
+
+func getRAMUsage() string {
+    data, err := os.ReadFile("/proc/meminfo")
+    if err != nil {
+        return "Error"
+    }
+
+    lines := strings.Split(string(data), "\n")
+    var total, available int
+
+    for _, line := range lines {
+        fields := strings.Fields(line)
+        if len(fields) < 2 {
+            continue
+        }
+        if fields[0] == "MemTotal:" {
+            val, _ := strconv.Atoi(fields[1])
+            total = val
+        } else if fields[0] == "MemAvailable:" {
+            val, _ := strconv.Atoi(fields[1])
+            available = val
+        }
+    }
+
+    if total == 0 {
+        return "Error"
+    }
+
+    used := total - available
+    
+    usedGB := float64(used) / 1024 / 1024
+    totalGB := float64(total) / 1024 / 1024
+
+    return fmt.Sprintf("%.2f GB / %.2f GB", usedGB, totalGB)
+}
+
+func getCPULoad() string {
+    data, err := os.ReadFile("/proc/loadavg")
+    if err != nil {
+        return "Error"
+    }
+
+    parts := strings.Fields(string(data))
+    if len(parts) >= 3 {
+        return fmt.Sprintf("%s (1m), %s (5m), %s (15m)", parts[0], parts[1], parts[2])
+    }
+
+    return "Error"
 }
 
 // --- API Calls ---
@@ -1011,10 +1084,12 @@ func getNearExpiredUsers() ([]UserData, error) {
     return nearExpired, nil
 }
 
-func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
+func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, limitIP int, limitQuota int) {
     res, err := apiCall("POST", "/user/create", map[string]interface{}{
-        "password": username,
-        "days":     days,
+        "password":    username,
+        "days":        days,
+        "limit_ip":    limitIP,
+        "limit_quota": limitQuota,
     })
 
     if err != nil {
@@ -1036,13 +1111,15 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
             "🔑 *Password*: `%s`\n"+
             "🌐 *Domain*: `%s`\n"+
             "🗓️ *Kadaluarsa*: `%s`\n"+
+            "🔢 *Limit IP*: `%d`\n"+
+            "💾 *Limit Kuota*: `%d GB`\n"+
             "📍 *Lokasi Server*: `%s`\n"+
             "📡 *ISP Server*: `%s`\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
             "🔒 *Private Tidak Digunakan User Lain*\n"+
             "⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━",
-            data["password"], data["domain"], data["expired"], ipInfo.City, ipInfo.Isp)
+            data["password"], data["domain"], data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
@@ -1055,83 +1132,6 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
             errMsg = "Pesan error tidak diketahui dari API."
         }
         sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", errMsg))
-        showMainMenu(bot, chatID)
-    }
-}
-
-func createGenericTrialUser(bot *tgbotapi.BotAPI, chatID int64, days int) {
-    trialPassword := generateRandomPassword(8)
-
-    res, err := apiCall("POST", "/user/create", map[string]interface{}{
-        "password": trialPassword,
-        "minutes":  0,
-        "days":     days,
-    })
-
-    if err != nil {
-        sendMessage(bot, chatID, "❌ Error Komunikasi API: "+err.Error())
-        return
-    }
-
-    if res["success"] == true {
-        data, ok := res["data"].(map[string]interface{})
-        if !ok {
-            sendMessage(bot, chatID, "❌ Gagal: Format data respons dari API tidak valid.")
-            showMainMenu(bot, chatID)
-            return
-        }
-
-        ipInfo, _ := getIpInfo()
-
-        password := "N/A"
-        if p, ok := data["password"].(string); ok {
-            password = p
-        }
-
-        expired := "N/A"
-        if e, ok := data["expired"].(string); ok {
-            expired = e
-        }
-
-        domain := "Unknown"
-        if d, ok := data["domain"].(string); ok && d != "" {
-            domain = d
-        } else {
-            if infoRes, err := apiCall("GET", "/info", nil); err == nil && infoRes["success"] == true {
-                if infoData, ok := infoRes["data"].(map[string]interface{}); ok {
-                    if d, ok := infoData["domain"].(string); ok {
-                        domain = d
-                    }
-                }
-            }
-        }
-
-        msg := fmt.Sprintf("🚀 *AKUN %d HARI BERHASIL DIBUAT*\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-            "🔑 *Password*: `%s`\n"+
-            "🌐 *Domain*: `%s`\n"+
-            "⏳ *Aktip selama*: `%d Hari`\n"+
-            "🗓️ *Kadaluarsa*: `%s`\n"+
-            "📍 *Lokasi Server*: `%s`\n"+
-            "📡 *ISP Server*: `%s`\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-            "🔒 *Private Tidak Digunakan User Lain*\n"+
-            "⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
-            "❗️ *Akun ini aktif selama %d hari 2 hp*\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            days, password, domain, days, expired, ipInfo.City, ipInfo.Isp, days)
-
-        reply := tgbotapi.NewMessage(chatID, msg)
-        reply.ParseMode = "Markdown"
-        deleteLastMessage(bot, chatID)
-        bot.Send(reply)
-        showMainMenu(bot, chatID)
-    } else {
-        errMsg, ok := res["message"].(string)
-        if !ok {
-            errMsg = "Respon kegagalan dari API tidak diketahui."
-        }
-        sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal membuat Trial: %s", errMsg))
         showMainMenu(bot, chatID)
     }
 }
@@ -1162,10 +1162,12 @@ func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
     }
 }
 
-func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
+func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, limitIP int, limitQuota int) {
     res, err := apiCall("POST", "/user/renew", map[string]interface{}{
-        "password": username,
-        "days":     days,
+        "password":    username,
+        "days":        days,
+        "limit_ip":    limitIP,
+        "limit_quota": limitQuota,
     })
 
     if err != nil {
@@ -1200,10 +1202,12 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
             "🔑 *Password*: `%s`\n"+
             "🌐 *Domain*: `%s`\n"+
             "🗓️ *Kadaluarsa Baru*: `%s`\n"+
+            "🔢 *Limit IP*: `%d`\n"+
+            "💾 *Limit Kuota*: `%d GB`\n"+
             "📍 *Lokasi Server*: `%s`\n"+
             "📡 *ISP Server*: `%s`\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━",
-            days, data["password"], domain, data["expired"], ipInfo.City, ipInfo.Isp)
+            days, data["password"], domain, data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
@@ -1278,6 +1282,12 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 
         ipInfo, _ := getIpInfo()
 
+        // --- AMBIL DATA TAMBAHAN (OS, RAM, CPU) ---
+        osInfo := getOSInfo()
+        ramInfo := getRAMUsage()
+        cpuInfo := getCPULoad()
+        // ---------------------------------------------
+
         msg := fmt.Sprintf("⚙️ *INFORMASI DETAIL SERVER*\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
             "🌐 *Domain*: `%s`\n"+
@@ -1286,8 +1296,12 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
             "🔧 *Layanan*: `%s`\n"+
             "📍 *Lokasi Server*: `%s`\n"+
             "📡 *ISP Server*: `%s`\n"+
+            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
+            "💻 *OS*: `%s`\n"+
+            "⚡ *CPU Load*: `%s`\n"+
+            "🧠 *RAM Usage*: `%s`\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━",
-            data["domain"], data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp)
+            data["domain"], data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp, osInfo, cpuInfo, ramInfo)
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
