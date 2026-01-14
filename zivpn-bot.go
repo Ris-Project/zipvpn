@@ -24,7 +24,7 @@ const (
     ApiUrl        = "http://127.0.0.1:8080/api"
     ApiKeyFile    = "/etc/zivpn/apikey"
     // !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
-    MenuPhotoURL = "https://h.uguu.se/NgaOrSxG.png"
+    MenuPhotoURL = "https://h.uguu.se/LfWhbfvw.png"
 
     // Interval untuk pengecekan dan penghapusan akun expired
     AutoDeleteInterval = 1 * time.Minute
@@ -1201,7 +1201,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, li
             }
         }
 
-        msg := fmt.Sprintf("✅ *AKUN BERHASIL DIPERPANJANG* (%d Hari)\n"+
+        msg := fmt.Sprintf("✅ *AKUN BERHASIL DIPERPANJANG*\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
             "🔑 *Password*: `%s`\n"+
             "🌐 *Domain*: `%s`\n"+
