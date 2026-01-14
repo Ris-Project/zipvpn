@@ -93,7 +93,7 @@ func main() {
     bot.Debug = false
     log.Printf("Authorized on account %s", bot.Self.UserName)
 
-    // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS) ---
+    // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS EXPIRED) ---
     go func() {
         autoDeleteExpiredUsers(bot, config.AdminID, false)
         ticker := time.NewTicker(AutoDeleteInterval)
@@ -137,7 +137,6 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, config *BotConfi
     state, exists := userStates[msg.From.ID]
     stateMutex.RUnlock()
 
-    // Handle Restore dari Upload File
     if exists && state == "wait_restore_file" {
         if msg.Document != nil {
             handleRestoreFromUpload(bot, msg)
@@ -148,7 +147,7 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, config *BotConfi
     }
 
     if exists {
-        handleState(bot, msg, state)
+        handleState(bot, msg, state, config) // Pass pointer config disini
         return
     }
 
@@ -158,26 +157,12 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, config *BotConfi
         switch msg.Command() {
         case "start", "panel", "menu":
             showMainMenu(bot, msg.Chat.ID, *config)
+        
+        // Command Legacy (tetap bisa dipakai jika mau)
         case "setgroup":
-            args := msg.CommandArguments()
-            if args == "" {
-                sendMessage(bot, msg.Chat.ID, "❌ Format salah.\n\nUsage: `/setgroup <ID_GRUP>`\n\nContoh: `/setgroup -1001234567890`")
-                return
-            }
-            groupID, err := strconv.ParseInt(args, 10, 64)
-            if err != nil {
-                sendMessage(bot, msg.Chat.ID, "❌ ID Grup harus berupa angka.")
-                return
-            }
+            setState(msg.From.ID, "set_notif_group")
+            sendMessage(bot, msg.Chat.ID, "📢 *SET NOTIF GRUP*\n\nSilakan masukkan ID Grup Telegram.\n\nContoh: `-1001234567890`")
 
-            config.NotifGroupID = groupID
-            if err := saveConfig(*config); err != nil {
-                sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
-                return
-            }
-            sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Notifikasi Grup di set ke ID: `%d`", groupID))
-
-        // Legacy command untuk set tanggal VPS (sekarang lebih enak pakai tombol)
         case "setvpsdate":
             setState(msg.From.ID, "set_vps_date")
             sendMessage(bot, msg.Chat.ID, "📅 *SET VPS EXPIRED*\n\nSilakan masukkan tanggal expired VPS.\n\nFormat: `YYYY-MM-DD`\nContoh: `2024-12-31`")
@@ -235,9 +220,14 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         )
         sendAndTrack(bot, msg)
 
+    // TOMBOL SETTING BARU
     case callbackData == "menu_set_vps_date":
         setState(query.From.ID, "set_vps_date")
         sendMessage(bot, query.Message.Chat.ID, "📅 *SET VPS EXPIRED*\n\nSilakan masukkan tanggal expired VPS.\n\nFormat: `YYYY-MM-DD`\nContoh: `2024-12-31`")
+
+    case callbackData == "menu_set_notif_group":
+        setState(query.From.ID, "set_notif_group")
+        sendMessage(bot, query.Message.Chat.ID, "📢 *SET NOTIF GRUP*\n\nSilakan masukkan ID Grup Telegram.\n\nContoh: `-1001234567890`")
 
     case callbackData == "menu_clean_restart":
         cleanAndRestartService(bot, query.Message.Chat.ID)
@@ -278,12 +268,13 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     bot.Request(tgbotapi.NewCallback(query.ID, ""))
 }
 
-// --- HANDLE STATE ---
-func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
+// --- HANDLE STATE (UPDATED SIGNATURE) ---
+func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string, config *BotConfig) {
     userID := msg.From.ID
     text := strings.TrimSpace(msg.Text)
 
     switch state {
+    // --- STATE SET VPS EXPIRED (FIXED BUG) ---
     case "set_vps_date":
         _, err := time.Parse("2006-01-02", text)
         if err != nil {
@@ -291,21 +282,53 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             return
         }
 
-        currentCfg, err := loadConfig()
+        // Load config ulang untuk memastikan data terbaru
+        newCfg, err := loadConfig()
         if err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
             return
         }
 
-        currentCfg.VpsExpiredDate = text
-        if err := saveConfig(currentCfg); err != nil {
+        newCfg.VpsExpiredDate = text
+        if err := saveConfig(newCfg); err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
             return
         }
 
+        // UPDATE POINTER CONFIG DI MAIN LOOP AGAR TIDAK REVERT
+        *config = newCfg
+
         resetState(userID)
         sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Tanggal Expired VPS berhasil diupdate ke: `%s`", text))
-        showMainMenu(bot, msg.Chat.ID, currentCfg)
+        showMainMenu(bot, msg.Chat.ID, *config)
+
+    // --- STATE SET NOTIF GRUP (BARU) ---
+    case "set_notif_group":
+        groupID, err := strconv.ParseInt(text, 10, 64)
+        if err != nil {
+            sendMessage(bot, msg.Chat.ID, "❌ ID Grup harus berupa angka.\nContoh: -1001234567890")
+            return
+        }
+
+        // Load config ulang
+        newCfg, err := loadConfig()
+        if err != nil {
+            sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
+            return
+        }
+
+        newCfg.NotifGroupID = groupID
+        if err := saveConfig(newCfg); err != nil {
+            sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
+            return
+        }
+
+        // UPDATE POINTER CONFIG DI MAIN LOOP
+        *config = newCfg
+
+        resetState(userID)
+        sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Notifikasi Grup berhasil diupdate ke ID: `%d`", groupID))
+        showMainMenu(bot, msg.Chat.ID, *config)
 
     case "create_username":
         stateMutex.Lock()
@@ -354,8 +377,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             limitIP, _ := strconv.Atoi(data["limit_ip"])
             limitQuota, _ := strconv.Atoi(data["limit_quota"])
             username := data["username"]
-            currentCfg, _ := loadConfig()
-            createUser(bot, msg.Chat.ID, username, days, limitIP, limitQuota, currentCfg)
+            createUser(bot, msg.Chat.ID, username, days, limitIP, limitQuota, *config)
             resetState(userID)
         }
 
@@ -607,16 +629,16 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config BotConfig) {
     }
 
     msgText := fmt.Sprintf("✨ *WELCOME TO BOT PGETUNNEL UDP ZIVPN*\n\n"+
-        "• 🖥️ *Server Info:*\n"+
+        "🖥️ *Server Info:*\n"+
         "• 🌐 *Domain*: `%s`\n"+
         "• 📍 *Lokasi*: `%s`\n"+
         "• 📡 *ISP*: `%s`\n"+
         "• 👤 *Total Akun*: `%d`\n"+
         "• 🔔 *Notif*: %s\n\n"+
-        "• ⏳ *Bot Status:*\n"+
+        "⏳ *Bot Status:*\n"+
         "• 🕒 *Uptime*: %s\n"+
         "• ⚠️ *VPS Exp*: %s\n\n"+
-        "• 🧑‍💻 *Hubungi @JesVpnt untuk bantuan*",
+        "Hubungi @JesVpnt untuk bantuan.",
         domain, ipInfo.City, ipInfo.Isp, totalUsers, notifStatus, uptimeStr, vpsInfo)
 
     deleteLastMessage(bot, chatID)
@@ -640,9 +662,11 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config BotConfig) {
         ),
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("⚠️ Set VPS Exp", "menu_set_vps_date"),
+            tgbotapi.NewInlineKeyboardButtonData("🔔 Set Grup", "menu_set_notif_group"),
         ),
+        // TOMBOL CLEAN & RESTART (HAPUS EXPIRED)
         tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("🗑️ Hapus Expired & Restart", "menu_clean_restart"),
+            tgbotapi.NewInlineKeyboardButtonData("🧹 Clean & Restart", "menu_clean_restart"),
         ),
     )
 
@@ -856,7 +880,7 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
     fileInfo, err := os.Stat(filePath)
     if os.IsNotExist(err) {
         log.Printf("❌ [DEBUG] File hilang setelah dibuat: %s", filePath)
-        sendMessage(bot, chatID, "❌ Error Aneh: File backup hilang setelah dibuat.")
+        sendMessage(bot, msg.Chat.ID, "❌ Error Aneh: File backup hilang setelah dibuat.")
         return
     }
 
@@ -1119,8 +1143,8 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
             domStr, _ := data["domain"].(string)
 
             // Fungsi sensor: Ganti karakter dengan bintang
-            maskedPass := strings.Repeat("***", len(passStr))
-            maskedDomain := strings.Repeat("***", len(domStr))
+            maskedPass := strings.Repeat("*", len(passStr))
+            maskedDomain := strings.Repeat("*", len(domStr))
 
             groupMsg := fmt.Sprintf("%s\n"+
                 "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
