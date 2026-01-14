@@ -28,8 +28,8 @@ const (
 
     // Interval untuk pengecekan dan penghapusan akun expired
     AutoDeleteInterval = 1 * time.Minute
-    // Interval untuk Auto Backup (6 Jam)
-    AutoBackupInterval = 6 * time.Hour
+    // Interval untuk Auto Backup (2 menit)
+    AutoBackupInterval = 2 * time.Minute
 
     // Konfigurasi Backup dan Service
     BackupDir   = "/etc/zivpn/backups"
@@ -502,9 +502,6 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         "Silakan pilih menu di bawah ini:",
         domain, ipInfo.City, ipInfo.Isp, totalUsers)
 
-    // expiredText TIDAK lagi ditambahkan ke sini
-    // msgText += expiredText 
-
     deleteLastMessage(bot, chatID)
 
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
@@ -704,14 +701,52 @@ func saveBackupToFile() (string, error) {
     return absPath, nil
 }
 
+// --- PERBAIKAN AUTO BACKUP (MENGIRIM KE TELEGRAM) ---
 func performAutoBackup(bot *tgbotapi.BotAPI, adminID int64) {
+    log.Println("🔄 [AutoBackup] Memulai proses backup otomatis...")
+
+    // 1. Simpan file ke disk
     filePath, err := saveBackupToFile()
     if err != nil {
-        log.Printf("❌ [AutoBackup] Gagal: %v", err)
+        log.Printf("❌ [AutoBackup] Gagal menyimpan file ke disk: %v", err)
         return
     }
-    log.Printf("✅ [AutoBackup] Berhasil disimpan: %s", filePath)
+
+    // 2. Cek info file (Ukuran & Keberadaan)
+    fileInfo, err := os.Stat(filePath)
+    if err != nil {
+        log.Printf("❌ [AutoBackup] Gagal membaca file info: %v", err)
+        return
+    }
+
+    // 3. Cek Limit Telegram (50MB)
+    if fileInfo.Size() > (50 * 1024 * 1024) {
+        sizeInMb := fileInfo.Size() / 1024 / 1024
+        log.Printf("⚠️ [AutoBackup] File terlalu besar (%d MB), melebihi limit Telegram.", sizeInMb)
+        
+        // Kirim pesan peringatan teks jika file terlalu besar
+        msg := tgbotapi.NewMessage(adminID, fmt.Sprintf("⚠️ *Auto Backup Gagal Terkirim*\n\nFile backup terlalu besar: **%d MB**.\nLimit Telegram: 50 MB.\n\nFile tersimpan di server:\n`%s`", sizeInMb, filePath))
+        msg.ParseMode = "Markdown"
+        bot.Send(msg)
+        return
+    }
+
+    // 4. Kirim File ke Telegram
+    doc := tgbotapi.NewDocument(adminID, tgbotapi.FilePath(filePath))
+    doc.Caption = fmt.Sprintf("💾 *AUTO BACKUP REPORT*\n📅 Waktu: `%s`\n📁 Ukuran: %.2f MB\n📂 Lokasi: `%s`",
+        time.Now().Format("2006-01-02 15:04:05"),
+        float64(fileInfo.Size())/1024/1024,
+        filePath)
+    doc.ParseMode = "Markdown"
+
+    _, err = bot.Send(doc)
+    if err != nil {
+        log.Printf("❌ [AutoBackup] Gagal mengirim file ke Telegram: %v", err)
+    } else {
+        log.Printf("✅ [AutoBackup] Berhasil dikirim ke Admin Telegram.")
+    }
 }
+// --------------------------------------------------
 
 func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
     log.Println("=== [DEBUG START] Perintah Backup Manual Diterima ===")
