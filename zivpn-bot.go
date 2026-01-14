@@ -28,8 +28,8 @@ const (
 
     // Interval untuk pengecekan dan penghapusan akun expired
     AutoDeleteInterval = 1 * time.Minute
-    // Interval untuk Auto Backup (2 menit)
-    AutoBackupInterval = 2 * time.Minute
+    // Interval untuk Auto Backup (3 jam)
+    AutoBackupInterval = 3 * time.Hour
 
     // Konfigurasi Backup dan Service
     BackupDir   = "/etc/zivpn/backups"
