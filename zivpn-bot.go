@@ -224,13 +224,17 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     bot.Request(tgbotapi.NewCallback(query.ID, ""))
 }
 
+// --- FUNGSI STATE DIPERBAIKI (FIXED RACE CONDITION) ---
 func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
     userID := msg.From.ID
     text := strings.TrimSpace(msg.Text)
 
     switch state {
     case "create_username":
-        setTempData(userID, map[string]string{"username": text})
+        stateMutex.Lock()
+        tempUserData[userID] = map[string]string{"username": text}
+        stateMutex.Unlock()
+        
         setState(userID, "create_limit_ip")
         sendMessage(bot, msg.Chat.ID, fmt.Sprintf("🔑 *CREATE USER*\nPassword: `%s`\n\nMasukkan **Limit IP** (0 untuk Unlimited):", text))
 
@@ -239,9 +243,17 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             sendMessage(bot, msg.Chat.ID, "❌ Limit IP harus berupa angka. Coba lagi:")
             return
         }
-        data := getTempData(userID)
+        
+        stateMutex.Lock()
+        data, ok := tempUserData[userID]
+        if !ok {
+            stateMutex.Unlock()
+            sendMessage(bot, msg.Chat.ID, "❌ Sesi berakhir. Silakan mulai dari awal.")
+            resetState(userID)
+            return
+        }
         data["limit_ip"] = text
-        setTempData(userID, data)
+        stateMutex.Unlock()
         
         setState(userID, "create_limit_quota")
         sendMessage(bot, msg.Chat.ID, "💾 *CREATE USER*\n\nMasukkan **Limit Kuota** dalam GB (0 untuk Unlimited):")
@@ -251,9 +263,17 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             sendMessage(bot, msg.Chat.ID, "❌ Limit Kuota harus berupa angka. Coba lagi:")
             return
         }
-        data := getTempData(userID)
+        
+        stateMutex.Lock()
+        data, ok := tempUserData[userID]
+        if !ok {
+            stateMutex.Unlock()
+            sendMessage(bot, msg.Chat.ID, "❌ Sesi berakhir. Silakan mulai dari awal.")
+            resetState(userID)
+            return
+        }
         data["limit_quota"] = text
-        setTempData(userID, data)
+        stateMutex.Unlock()
         
         setState(userID, "create_days")
         sendMessage(bot, msg.Chat.ID, "📅 *CREATE USER*\n\nMasukkan **Durasi** (*Hari*) pembuatan:")
@@ -265,17 +285,20 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             return
         }
         
-        data, ok := getTempData(userID)
+        stateMutex.Lock()
+        data, ok := tempUserData[userID]
         if !ok {
+            stateMutex.Unlock()
             sendMessage(bot, msg.Chat.ID, "❌ Sesi berakhir. Silakan mulai dari awal.")
             resetState(userID)
             return
         }
-
         limitIP, _ := strconv.Atoi(data["limit_ip"])
         limitQuota, _ := strconv.Atoi(data["limit_quota"])
+        username := data["username"]
+        stateMutex.Unlock()
 
-        createUser(bot, msg.Chat.ID, data["username"], days, limitIP, limitQuota)
+        createUser(bot, msg.Chat.ID, username, days, limitIP, limitQuota)
         resetState(userID)
 
     case "renew_limit_ip":
@@ -283,9 +306,17 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             sendMessage(bot, msg.Chat.ID, "❌ Limit IP harus berupa angka. Coba lagi:")
             return
         }
-        data := getTempData(userID)
+        
+        stateMutex.Lock()
+        data, ok := tempUserData[userID]
+        if !ok {
+            stateMutex.Unlock()
+            sendMessage(bot, msg.Chat.ID, "❌ Sesi berakhir. Silakan mulai dari awal.")
+            resetState(userID)
+            return
+        }
         data["limit_ip"] = text
-        setTempData(userID, data)
+        stateMutex.Unlock()
         
         setState(userID, "renew_limit_quota")
         sendMessage(bot, msg.Chat.ID, "💾 *MENU RENEW*\n\nMasukkan **Limit Kuota** dalam GB (0 untuk Unlimited):")
@@ -295,9 +326,17 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             sendMessage(bot, msg.Chat.ID, "❌ Limit Kuota harus berupa angka. Coba lagi:")
             return
         }
-        data := getTempData(userID)
+        
+        stateMutex.Lock()
+        data, ok := tempUserData[userID]
+        if !ok {
+            stateMutex.Unlock()
+            sendMessage(bot, msg.Chat.ID, "❌ Sesi berakhir. Silakan mulai dari awal.")
+            resetState(userID)
+            return
+        }
         data["limit_quota"] = text
-        setTempData(userID, data)
+        stateMutex.Unlock()
         
         setState(userID, "renew_days")
         sendMessage(bot, msg.Chat.ID, "📅 *MENU RENEW*\n\nMasukkan tambahan **Durasi** (*Hari*):")
@@ -309,17 +348,20 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             return
         }
 
-        data, ok := getTempData(userID)
+        stateMutex.Lock()
+        data, ok := tempUserData[userID]
         if !ok {
+            stateMutex.Unlock()
             sendMessage(bot, msg.Chat.ID, "❌ Sesi berakhir. Silakan mulai dari awal.")
             resetState(userID)
             return
         }
-
         limitIP, _ := strconv.Atoi(data["limit_ip"])
         limitQuota, _ := strconv.Atoi(data["limit_quota"])
+        username := data["username"]
+        stateMutex.Unlock()
 
-        renewUser(bot, msg.Chat.ID, data["username"], days, limitIP, limitQuota)
+        renewUser(bot, msg.Chat.ID, username, days, limitIP, limitQuota)
         resetState(userID)
     }
 }
