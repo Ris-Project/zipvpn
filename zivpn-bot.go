@@ -118,6 +118,7 @@ func main() {
     }
 }
 
+// --- FUNGSI HANDLE MESSAGE DIPERBARUI (MENANGANI /PANEL) ---
 func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
     if msg.From.ID != adminID {
         reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Anda bukan admin.")
@@ -144,13 +145,25 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
         return
     }
 
+    // Normalisasi teks menjadi huruf kecil
+    text := strings.ToLower(msg.Text)
+
     if msg.IsCommand() {
         switch msg.Command() {
-        case "start":
+        case "start", "panel", "menu": // Menambahkan command /panel dan /menu
             showMainMenu(bot, msg.Chat.ID)
         default:
-            msg := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal.")
-            sendAndTrack(bot, msg)
+            reply := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal. Ketik /panel untuk membuka menu.")
+            sendAndTrack(bot, reply)
+        }
+    } else {
+        // Jika tidak dalam state (idle) dan mengetik "panel" atau "menu"
+        if text == "panel" || text == "menu" || text == "pull panel" {
+            showMainMenu(bot, msg.Chat.ID)
+        } else {
+            // Pesan default jika bot idle dan menerima teks lain
+            reply := tgbotapi.NewMessage(msg.Chat.ID, "⚠️ Sistem Siaga.\nKetik /panel atau ketik 'menu' untuk menampilkan panel utama.")
+            sendAndTrack(bot, reply)
         }
     }
 }
@@ -164,6 +177,13 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     callbackData := query.Data
 
     switch {
+    case callbackData == "menu_trial":
+        // Fitur Trial 1 Hari
+        randomPass := generateRandomPassword(4)
+        // Format: createUser(bot, chatID, username, days, limitIP, limitQuota)
+        sendMessage(bot, query.Message.Chat.ID, "⏳ Sedang membuat akun trial...")
+        createUser(bot, query.Message.Chat.ID, randomPass, 1, 1, 1)
+        
     case callbackData == "menu_create":
         setState(query.From.ID, "create_username")
         setTempData(query.From.ID, make(map[string]string))
@@ -584,21 +604,27 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
     deleteLastMessage(bot, chatID)
 
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
+        // Baris 1: Trial & Create
         tgbotapi.NewInlineKeyboardRow(
+            tgbotapi.NewInlineKeyboardButtonData("🎁 Trial 1 Hari", "menu_trial"),
             tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun", "menu_create"),
         ),
+        // Baris 2: Renew & Delete
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
             tgbotapi.NewInlineKeyboardButtonData("🗑️ Hapus Akun", "menu_delete"),
         ),
+        // Baris 3: List & Info
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("📋 Daftar Akun", "menu_list"),
             tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
         ),
+        // Baris 4: Backup & Restore
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("💾 Backup Data", "menu_backup"),
             tgbotapi.NewInlineKeyboardButtonData("♻️ Restore Data", "menu_restore"),
         ),
+        // Baris 5: Clean
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("🧹 Hapus Expired & Restart", "menu_clean_restart"),
         ),
@@ -1078,13 +1104,18 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
         }
 
         ipInfo, _ := getIpInfo()
+        
+        title := "🎉 *AKUN BERHASIL DIBUAT*"
+        if days == 1 {
+            title = "🎁 *AKUN TRIAL 1 HARI*"
+        }
 
-        msg := fmt.Sprintf("🎉 *AKUN BERHASIL DIBUAT*\n"+
+        msg := fmt.Sprintf("%s\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
             "🔑 *Password*: `%s`\n"+
             "🌐 *Domain*: `%s`\n"+
             "🗓️ *Expired*: `%s`\n"+
-            "🔢 *Limit IP*: `%d`\n"+
+            "🔢 *Limit IP*: `%d` Device\n"+
             "💾 *Limit Kuota*: `%d GB`\n"+
             "📍 *Lokasi Server*: `%s`\n"+
             "📡 *ISP Server*: `%s`\n"+
@@ -1092,7 +1123,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
             "🔒 *Private Tidak Digunakan User Lain*\n"+
             "⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━",
-            data["password"], data["domain"], data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
+            title, data["password"], data["domain"], data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
@@ -1175,7 +1206,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, li
             "🔑 *Password*: `%s`\n"+
             "🌐 *Domain*: `%s`\n"+
             "🗓️ *Expired Baru*: `%s`\n"+
-            "🔢 *Limit IP*: `%d`\n"+
+            "🔢 *Limit IP*: `%d` Device\n"+
             "💾 *Limit Kuota*: `%d GB`\n"+
             "📍 *Lokasi Server*: `%s`\n"+
             "📡 *ISP Server*: `%s`\n"+
