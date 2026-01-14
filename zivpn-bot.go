@@ -1201,7 +1201,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, li
             }
         }
 
-        msg := fmt.Sprintf("✅ *AKUN BERHASIL DIPERPANJANG*\n"+
+        msg := fmt.Sprintf("✅ *BERHASIL DIPERPANJANG* (%d Hari)\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
             "🔑 *Password*: `%s`\n"+
             "🌐 *Domain*: `%s`\n"+
