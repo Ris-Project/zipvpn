@@ -27,7 +27,7 @@ const (
     MenuPhotoURL = "https://h.uguu.se/LfWhbfvw.png"
 
     // Interval untuk pengecekan dan penghapusan akun expired
-    AutoDeleteInterval = 1 * time.Minute
+    AutoDeleteInterval = 30 * time.Second
     // Interval untuk Auto Backup (3 jam)
     AutoBackupInterval = 3 * time.Hour
 
@@ -670,20 +670,20 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
         tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("🎁 Trial", "menu_trial"),
-            tgbotapi.NewInlineKeyboardButtonData("➕ Create", "menu_create"),
+            tgbotapi.NewInlineKeyboardButtonData("🎁 Trial Akun", "menu_trial"),
+            tgbotapi.NewInlineKeyboardButtonData("➕ Create Akun", "menu_create"),
         ),
         tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("🔄 Renew", "menu_renew"),
-            tgbotapi.NewInlineKeyboardButtonData("🗑️ Delete", "menu_delete"),
+            tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
+            tgbotapi.NewInlineKeyboardButtonData("🗑️ Delete Akun", "menu_delete"),
         ),
         tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("📋 List", "menu_list"),
-            tgbotapi.NewInlineKeyboardButtonData("📊 Info", "menu_info"),
+            tgbotapi.NewInlineKeyboardButtonData("📋 List Akun", "menu_list"),
+            tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
         ),
         tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("💾 Backup", "menu_backup"),
-            tgbotapi.NewInlineKeyboardButtonData("♻️ Restore", "menu_restore"),
+            tgbotapi.NewInlineKeyboardButtonData("💾 Backup User", "menu_backup"),
+            tgbotapi.NewInlineKeyboardButtonData("♻️ Restore User", "menu_restore"),
         ),
         tgbotapi.NewInlineKeyboardRow(
             // Tombol Set VPS Expired
@@ -975,7 +975,21 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
     var deletedUsers []string
 
     for _, u := range users {
-        if u.Status == "Expired" {
+        // 1. Parse tanggal expired dari string ke Time object
+        expiredTime, err := time.Parse("2006-01-02", u.Expired)
+        if err != nil {
+            // Coba format dengan jam jika format tanggal saja gagal
+            expiredTime, err = time.Parse("2006-01-02 15:04:05", u.Expired)
+            if err != nil {
+                // Jika format tanggal kacau, skip user ini
+                continue
+            }
+        }
+
+        // 2. Logika Utama: Cek apakah waktu SEKARANG sudah melebihi waktu EXPIRED
+        if time.Now().After(expiredTime) {
+            
+            // Lakukan penghapusan via API
             res, err := apiCall("POST", "/user/delete", map[string]interface{}{
                 "password": u.Password,
             })
@@ -988,13 +1002,14 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
             if res["success"] == true {
                 deletedCount++
                 deletedUsers = append(deletedUsers, u.Password)
-                log.Printf("✅ [AutoDelete] User expired %s berhasil dihapus.", u.Password)
+                log.Printf("✅ [AutoDelete] User kadaluwarsa [%s] (Exp: %s) berhasil dihapus.", u.Password, u.Expired)
             } else {
                 log.Printf("❌ [AutoDelete] Gagal menghapus %s: %s", u.Password, res["message"])
             }
         }
     }
 
+    // --- Logika Restart Service (Opsional, hanya jika diminta via menu manual) ---
     if shouldRestart {
         if deletedCount > 0 {
             log.Printf("🔄 [Restart Service] Melakukan restart service %s...", ServiceName)
@@ -1006,22 +1021,29 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
             } else {
                 log.Printf("✅ Service %s berhasil di-restart.", ServiceName)
                 if bot != nil {
-                    bot.Send(tgbotapi.NewMessage(adminID, fmt.Sprintf("🔄 %d akun expired dihapus & Service %s berhasil di-restart.", deletedCount, ServiceName)))
+                    bot.Send(tgbotapi.NewMessage(adminID, fmt.Sprintf("🔄 %d akun kadaluwarsa dihapus & Service %s berhasil di-restart.", deletedCount, ServiceName)))
                 }
             }
         } else {
             if bot != nil {
-                bot.Send(tgbotapi.NewMessage(adminID, "✅ Tidak ada akun expired. Tidak perlu restart service."))
+                bot.Send(tgbotapi.NewMessage(adminID, "✅ Tidak ada akun kadaluwarsa. Tidak perlu restart service."))
             }
         }
         return
     }
 
+    // --- Notifikasi Admin (Hanya jika ada yang dihapus pada background loop) ---
     if deletedCount > 0 {
         if bot != nil {
-            msgText := fmt.Sprintf("🗑️ *PEMBERSIHAN AKUN OTOMATIS*\n\n"+
-                "Total `%d` akun kedaluwarsa telah dihapus secara otomatis:\n- %s",
-                deletedCount, strings.Join(deletedUsers, "\n- "))
+            // Batasi pesan agar tidak spam jika terlalu banyak user yang dihapus sekaligus
+            userListStr := strings.Join(deletedUsers, ", ")
+            if len(userListStr) > 500 {
+                userListStr = userListStr[:500] + "..."
+            }
+
+            msgText := fmt.Sprintf("🗑️ *AUTO DELETE EXPIRED*\n\n"+
+                "Bot telah menghapus `%d` akun yang tanggalnya sudah lewat:\n- %s",
+                deletedCount, userListStr)
 
             notification := tgbotapi.NewMessage(adminID, msgText)
             notification.ParseMode = "Markdown"
