@@ -2,7 +2,6 @@ package main
 
 import (
     "bytes"
-    "context"
     "encoding/json"
     "fmt"
     "io"
@@ -27,7 +26,6 @@ const (
     MenuPhotoURL  = "https://h.uguu.se/LfWhbfvw.png"
 
     // ===== PAKASIR CONFIG =====
-    // PASTIKAN DATA INI BENAR
     PakasirSlug      = "riswan"
     PakasirAPIKey    = "wQpuwIM4iqZV0S23YpFgl23zCpvhXEsC"
     PakasirCreateURL = "https://app.pakasir.com/api/transactioncreate/qris"
@@ -61,7 +59,6 @@ type UserData struct {
     Status   string `json:"status"`
 }
 
-// Pakasir Structs
 type PakasirCreateRequest struct {
     Project string `json:"project"`
     OrderID string `json:"order_id"`
@@ -79,10 +76,9 @@ type PakasirResponse struct {
 }
 
 var (
-    stateMutex     sync.RWMutex
-    userStates     = make(map[int64]string)
-    tempUserData   = make(map[int64]map[string]string)
-    lastMessageIDs = make(map[int64]int)
+    stateMutex   sync.RWMutex
+    userStates   = make(map[int64]string)
+    tempUserData = make(map[int64]map[string]string)
 )
 
 func main() {
@@ -148,28 +144,43 @@ func main() {
     }
 }
 
-// =========================================================================
-// --- HELPER DOWNLOAD QR CODE ---
-// =========================================================================
+// --- HELPER FUNCTIONS ---
+
+func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
+    msg := tgbotapi.NewMessage(chatID, text)
+    msg.ParseMode = "Markdown"
+    bot.Send(msg)
+}
+
+func sendImageMessage(bot *tgbotapi.BotAPI, chatID int64, photoURL string, caption string) {
+    photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FileURL(photoURL))
+    photoMsg.Caption = caption
+    photoMsg.ParseMode = "Markdown"
+    bot.Send(photoMsg)
+}
+
+func sendLocalImageMessage(bot *tgbotapi.BotAPI, chatID int64, filePath string, caption string, keyboard tgbotapi.InlineKeyboardMarkup) {
+    photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(filePath))
+    photoMsg.Caption = caption
+    photoMsg.ParseMode = "Markdown"
+    photoMsg.ReplyMarkup = keyboard
+    bot.Send(photoMsg)
+}
+
 func downloadQRImage(qrString string) (string, error) {
     qrURL := fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", qrString)
-    
-    // Gunakan Client dengan Timeout (PENTING) untuk mencegah bot hang
-    client := &http.Client{Timeout: 10 * time.Second}
+    client := &http.Client{Timeout: 5 * time.Second}
     
     resp, err := client.Get(qrURL)
     if err != nil {
-        log.Printf("[Download QR] Error connect: %v", err)
         return "", err
     }
     defer resp.Body.Close()
 
     if resp.StatusCode != 200 {
-        log.Printf("[Download QR] Status Code: %d", resp.StatusCode)
         return "", fmt.Errorf("status code: %d", resp.StatusCode)
     }
 
-    // Buat file sementara
     tmpFile := "/tmp/qr_" + strconv.FormatInt(time.Now().Unix(), 10) + ".png"
     out, err := os.Create(tmpFile)
     if err != nil {
@@ -186,7 +197,7 @@ func downloadQRImage(qrString string) (string, error) {
 }
 
 // =========================================================================
-// --- PAKASIR API INTEGRATION ---
+// --- PAKASIR LOGIC ---
 // =========================================================================
 
 func generateOrderID() string {
@@ -194,7 +205,6 @@ func generateOrderID() string {
 }
 
 func createPakasirOrder(amount int) (string, string, error) {
-    log.Println("[Pakasir] Membuat Order...")
     orderID := generateOrderID()
     
     payload := PakasirCreateRequest{
@@ -208,29 +218,23 @@ func createPakasirOrder(amount int) (string, string, error) {
     req, _ := http.NewRequest("POST", PakasirCreateURL, bytes.NewBuffer(jsonData))
     req.Header.Set("Content-Type", "application/json")
 
-    client := &http.Client{Timeout: 15 * time.Second}
+    client := &http.Client{Timeout: 10 * time.Second}
     resp, err := client.Do(req)
     if err != nil {
-        log.Printf("[Pakasir] Request Error: %v", err)
         return "", "", err
     }
     defer resp.Body.Close()
 
     body, _ := io.ReadAll(resp.Body)
-    log.Printf("[Pakasir] Raw Response: %s", string(body)) // Debugging
-
     var result PakasirResponse
     if err := json.Unmarshal(body, &result); err != nil {
-        log.Printf("[Pakasir] Unmarshal Error: %v", err)
         return "", "", err
     }
 
     if result.Status != "success" {
-        log.Printf("[Pakasir] API Error: %s - %s", result.Status, result.Message)
         return "", "", fmt.Errorf("Pakasir error: %s", result.Message)
     }
 
-    log.Println("[Pakasir] Order Berhasil Dibuat!")
     return orderID, result.Data.QrString, nil
 }
 
@@ -246,7 +250,7 @@ func checkPakasirStatus(orderID string, amount int) (bool, error) {
     req, _ := http.NewRequest("POST", PakasirCheckURL, bytes.NewBuffer(jsonData))
     req.Header.Set("Content-Type", "application/json")
 
-    client := &http.Client{Timeout: 10 * time.Second}
+    client := &http.Client{Timeout: 5 * time.Second}
     resp, err := client.Do(req)
     if err != nil {
         return false, err
@@ -267,7 +271,7 @@ func checkPakasirStatus(orderID string, amount int) (bool, error) {
 }
 
 // =========================================================================
-// --- LOGIKA USER BIASA (PEMBELIAN PAKASIR) ---
+// --- GUEST LOGIC ---
 // =========================================================================
 
 func handleGuestMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, config BotConfig) {
@@ -363,8 +367,6 @@ func handleGuestCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
     userID := query.From.ID
     chatID := query.Message.Chat.ID
 
-    log.Printf("[Guest Callback] ID: %d, Data: %s", userID, callbackData)
-
     switch callbackData {
     case "guest_start_purchase":
         setState(userID, "guest_password")
@@ -387,20 +389,13 @@ func handleGuestCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
 }
 
 func processGuestPlanSelection(bot *tgbotapi.BotAPI, chatID int64, userID int64, days int, price int) {
-    log.Printf("[Process Plan] UserID: %d, Days: %d", userID, days)
-    
-    // Kirim pesan status dulu agar user tahu bot hidup
-    sendMessage(bot, chatID, "⏳ Sedang membuat transaksi di Pakasir...")
-    
     // 1. Create Order di Pakasir
     orderID, qrString, err := createPakasirOrder(price)
     if err != nil {
-        sendMessage(bot, chatID, "❌ Gagal membuat pembayaran: "+err.Error()+"\n\nPastikan Slug dan API Key Pakasir sudah benar.")
+        sendMessage(bot, chatID, "❌ Gagal membuat pembayaran: "+err.Error())
         resetState(userID)
         return
     }
-
-    log.Printf("[Process Plan] Order ID: %s, QR String received", orderID)
 
     // 2. Simpan Data Transaksi
     stateMutex.Lock()
@@ -412,12 +407,10 @@ func processGuestPlanSelection(bot *tgbotapi.BotAPI, chatID int64, userID int64,
     tempUserData[userID]["order_id"] = orderID
     stateMutex.Unlock()
 
-    // 3. Download QR Image (Menggunakan Goroutine supaya tidak blocking lama jika error)
-    // Tapi untuk memastikan pesan terkirim urut, kita pakai cara biasa dengan timeout
-    log.Println("[Process Plan] Attempting to download QR Image...")
+    // 3. Download QR Image
     qrFilePath, err := downloadQRImage(qrString)
 
-    // 4. Kirim Invoice ke User
+    // 4. Kirim Invoice
     textInvoice := fmt.Sprintf("💳 *INVOICE PEMBELIAN*\n\n"+
         "📦 Paket: %d Hari\n"+
         "💰 Total: Rp %d\n"+
@@ -431,58 +424,27 @@ func processGuestPlanSelection(bot *tgbotapi.BotAPI, chatID int64, userID int64,
             tgbotapi.NewInlineKeyboardButtonData("🔄 CEK STATUS", "manual_check"),
         ),
     )
-
-    deleteLastMessage(bot, chatID)
     
-    var sentMsg tgbotapi.Message
-    
-    // Logika Kirim: Prioritas Gambar, Jika Gagal -> Kirim Text String
     if err == nil {
-        // Kirim file lokal (Sukses)
-        photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(qrFilePath))
-        photoMsg.Caption = textInvoice
-        photoMsg.ParseMode = "Markdown"
-        photoMsg.ReplyMarkup = keyboardPay
-        
-        sentMsg, err = bot.Send(photoMsg)
-        if err != nil {
-            log.Printf("Gagal Kirim Foto: %v", err)
-            // Fallback jika gagal kirim foto (misal: Telegram reject file)
-            fallbackText := textInvoice + fmt.Sprintf("\n\n⚠️ *Gambar gagal dimuat, gunakan kode di bawah:*\n`%s`", qrString)
-            msg := tgbotapi.NewMessage(chatID, fallbackText)
-            msg.ParseMode = "Markdown"
-            msg.ReplyMarkup = keyboardPay
-            sentMsg, _ = bot.Send(msg)
-        } else {
-            // Hapus file jika berhasil kirim
-            go func() {
-                time.Sleep(5 * time.Second)
-                os.Remove(qrFilePath)
-            }()
-        }
+        sendLocalImageMessage(bot, chatID, qrFilePath, textInvoice, keyboardPay)
+        // Hapus file setelah 5 detik
+        go func() {
+            time.Sleep(5 * time.Second)
+            os.Remove(qrFilePath)
+        }()
     } else {
-        // Fallback: Gagal Download
-        log.Printf("[Process Plan] Download QR Gagal: %v", err)
-        fallbackText := textInvoice + fmt.Sprintf("\n\n⚠️ *Gagal memuat gambar QR, gunakan kode manual di bawah:*\n`%s`", qrString)
+        fallbackText := textInvoice + fmt.Sprintf("\n\n⚠️ *Gagal memuat gambar, gunakan kode:*\n`%s`", qrString)
         msg := tgbotapi.NewMessage(chatID, fallbackText)
         msg.ParseMode = "Markdown"
         msg.ReplyMarkup = keyboardPay
-        sentMsg, _ = bot.Send(msg)
-    }
-    
-    // Simpan ID pesan invoice agar bisa diedit nanti
-    if sentMsg.MessageID != 0 {
-        stateMutex.Lock()
-        tempUserData[userID]["invoice_msg_id"] = strconv.Itoa(sentMsg.MessageID)
-        stateMutex.Unlock()
+        bot.Send(msg)
     }
 
-    // 5. Mulai Loop Pengecekan Otomatis (Polling)
+    // 5. Mulai Polling
     go monitorPaymentStatus(bot, chatID, userID, orderID, price, days)
 }
 
 func monitorPaymentStatus(bot *tgbotapi.BotAPI, chatID int64, userID int64, orderID string, price int, days int) {
-    // Timeout 15 Menit (900 detik)
     timeout := time.After(15 * time.Minute)
     ticker := time.NewTicker(5 * time.Second)
     defer ticker.Stop()
@@ -490,36 +452,22 @@ func monitorPaymentStatus(bot *tgbotapi.BotAPI, chatID int64, userID int64, orde
     for {
         select {
         case <-timeout:
-            log.Printf("[Pakasir] Timeout order %s untuk user %d", orderID, userID)
-            // Kirim pesan timeout
             resetState(userID)
-            bot.Send(tgbotapi.NewMessage(chatID, "⏱️ Waktu pembayaran habis. Silakan buat pesanan baru."))
+            sendMessage(bot, chatID, "⏱️ Waktu pembayaran habis. Silakan buat pesanan baru.")
             return
 
         case <-ticker.C:
             isPaid, err := checkPakasirStatus(orderID, price)
             if err != nil {
-                log.Printf("[Pakasir] Error checking order %s: %v", orderID, err)
                 continue
             }
 
             if isPaid {
-                log.Printf("[Pakasir] PAYMENT SUCCESS! Order %s", orderID)
-                
-                // Edit pesan invoice jadi success
                 stateMutex.RLock()
-                invoiceMsgID := tempUserData[userID]["invoice_msg_id"]
                 password := tempUserData[userID]["password"]
                 stateMutex.RUnlock()
-
-                if invoiceMsgID != "" {
-                    msgID, _ := strconv.Atoi(invoiceMsgID)
-                    editConfig := tgbotapi.NewEditMessageCaption(chatID, msgID, "✅ *PEMBAYARAN BERHASIL!*\n\nSedang membuat akun...")
-                    editConfig.ParseMode = "Markdown"
-                    bot.Send(editConfig)
-                }
-
-                // Create User
+                
+                sendMessage(bot, chatID, "✅ *PEMBAYARAN BERHASIL!*\n\nSedang membuat akun...")
                 createPurchasedAccount(bot, chatID, userID, password, days)
                 return
             }
@@ -528,17 +476,6 @@ func monitorPaymentStatus(bot *tgbotapi.BotAPI, chatID int64, userID int64, orde
 }
 
 func createPurchasedAccount(bot *tgbotapi.BotAPI, chatID int64, userID int64, password string, days int) {
-    stateMutex.RLock()
-    data, ok := tempUserData[userID]
-    stateMutex.RUnlock()
-
-    if !ok || password == "" {
-        sendMessage(bot, chatID, "⚠️ Error: Data sesi hilang.")
-        resetState(userID)
-        return
-    }
-
-    // Call VPN API
     res, err := apiCall("POST", "/user/create", map[string]interface{}{
         "password":    password,
         "days":        days,
@@ -558,7 +495,6 @@ func createPurchasedAccount(bot *tgbotapi.BotAPI, chatID int64, userID int64, pa
 
     dataRes, _ := res["data"].(map[string]interface{})
 
-    // Format Pesan Sukses
     msgSuccess := fmt.Sprintf("🎉 *AKUN ANDA SUDAH SIAP!*\n"+
         "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
         "🔑 *Password*: `%s`\n"+
@@ -570,33 +506,24 @@ func createPurchasedAccount(bot *tgbotapi.BotAPI, chatID int64, userID int64, pa
         "Terima kasih telah berlangganan!",
         dataRes["password"], dataRes["domain"], dataRes["expired"])
 
-    reply := tgbotapi.NewMessage(chatID, msgSuccess)
-    reply.ParseMode = "Markdown"
-    deleteLastMessage(bot, chatID)
-    bot.Send(reply)
-    
+    sendMessage(bot, chatID, msgSuccess)
     resetState(userID)
 
-    // Notif Admin
     config, _ := loadConfig()
     if config.AdminID != 0 {
-        adminMsg := fmt.Sprintf("💰 *USER BARU (PAID)*\n\n"+
-            "User ID: `%d`\n"+
-            "Password: `%s`\n"+
-            "Paket: %d Hari",
-            userID, password, days)
+        adminMsg := fmt.Sprintf("💰 *USER BARU (PAID)*\n\nUser ID: `%d`\nPassword: `%s`\nPaket: %d Hari", userID, password, days)
         bot.Send(tgbotapi.NewMessage(config.AdminID, adminMsg))
     }
 }
 
 // =========================================================================
-// --- LOGIKA ADMIN (EXISTING CODE) ---
+// --- ADMIN LOGIC ---
 // =========================================================================
 
 func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
     if msg.From.ID != adminID {
         reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak.")
-        sendAndTrack(bot, reply)
+        bot.Send(reply)
         return
     }
 
@@ -626,7 +553,7 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
             showMainMenu(bot, msg.Chat.ID)
         default:
             reply := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal. Ketik /panel.")
-            sendAndTrack(bot, reply)
+            bot.Send(reply)
         }
     } else {
         if text == "panel" || text == "menu" {
@@ -671,7 +598,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
             tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")),
         )
-        sendAndTrack(bot, msg)
+        bot.Send(msg)
     case callbackData == "menu_set_vps_date":
         setState(query.From.ID, "set_vps_date")
         sendMessage(bot, query.Message.Chat.ID, "📅 *SET VPS EXPIRED*\n\nFormat: `YYYY-MM-DD`")
@@ -703,7 +630,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
                 tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel"),
             ),
         )
-        sendAndTrack(bot, msg)
+        bot.Send(msg)
     case strings.HasPrefix(callbackData, "confirm_delete:"):
         username := strings.TrimPrefix(callbackData, "confirm_delete:")
         deleteUser(bot, query.Message.Chat.ID, username)
@@ -839,8 +766,6 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
     }
 }
 
-// --- HELPER & SYSTEM FUNCTIONS ---
-
 func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action string) {
     users, err := getUsers()
     if err != nil {
@@ -901,7 +826,7 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
     msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("*%s*\nHalaman %d/%d", title, page, totalPages))
     msg.ParseMode = "Markdown"
     msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
-    sendAndTrack(bot, msg)
+    bot.Send(msg)
 }
 
 func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
@@ -968,8 +893,6 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         "• ⚠️ *VPS Exp*: %s",
         domain, ipInfo.City, ipInfo.Isp, totalUsers, notifStatus, uptimeStr, vpsInfo)
 
-    deleteLastMessage(bot, chatID)
-
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("🎁 Trial Akun", "menu_trial"),
@@ -1000,30 +923,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
     photoMsg.Caption = msgText
     photoMsg.ParseMode = "Markdown"
     photoMsg.ReplyMarkup = keyboard
-
-    sentMsg, err := bot.Send(photoMsg)
-    if err == nil {
-        stateMutex.Lock()
-        lastMessageIDs[chatID] = sentMsg.MessageID
-        stateMutex.Unlock()
-    } else {
-        textMsg := tgbotapi.NewMessage(chatID, msgText)
-        textMsg.ParseMode = "Markdown"
-        textMsg.ReplyMarkup = keyboard
-        sendAndTrack(bot, textMsg)
-    }
-}
-
-func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
-    msg := tgbotapi.NewMessage(chatID, text)
-    msg.ParseMode = "Markdown"
-    stateMutex.RLock()
-    _, inState := userStates[chatID]
-    stateMutex.RUnlock()
-    if inState {
-        msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")))
-    }
-    sendAndTrack(bot, msg)
+    bot.Send(photoMsg)
 }
 
 func setState(userID int64, state string) {
@@ -1043,30 +943,6 @@ func setTempData(userID int64, data map[string]string) {
     stateMutex.Lock()
     defer stateMutex.Unlock()
     tempUserData[userID] = data
-}
-
-func deleteLastMessage(bot *tgbotapi.BotAPI, chatID int64) {
-    stateMutex.RLock()
-    msgID, ok := lastMessageIDs[chatID]
-    stateMutex.RUnlock()
-    if ok {
-        deleteMsg := tgbotapi.NewDeleteMessage(chatID, msgID)
-        if _, err := bot.Request(deleteMsg); err == nil {
-            stateMutex.Lock()
-            delete(lastMessageIDs, chatID)
-            stateMutex.Unlock()
-        }
-    }
-}
-
-func sendAndTrack(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig) {
-    deleteLastMessage(bot, msg.ChatID)
-    sentMsg, err := bot.Send(msg)
-    if err == nil {
-        stateMutex.Lock()
-        lastMessageIDs[msg.ChatID] = sentMsg.MessageID
-        stateMutex.Unlock()
-    }
 }
 
 func generateRandomPassword(length int) string {
@@ -1094,6 +970,8 @@ func saveConfig(config BotConfig) error {
     }
     return os.WriteFile(BotConfigFile, file, 0644)
 }
+
+// --- BACKUP & RESTORE ---
 
 func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
     resetState(msg.From.ID)
@@ -1270,7 +1148,7 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
     fileInfo, err := os.Stat(filePath)
     if os.IsNotExist(err) {
         log.Printf("❌ [DEBUG] File hilang setelah dibuat: %s", filePath)
-        sendMessage(bot, chatID, "❌ Error Aneh: File backup hilang setelah dibuat.")
+        sendMessage(bot, msg.Chat.ID, "❌ Error Aneh: File backup hilang setelah dibuat.")
         return
     }
 
@@ -1290,8 +1168,6 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
         float64(fileInfo.Size())/1024/1024,
         filePath)
     doc.ParseMode = "Markdown"
-
-    deleteLastMessage(bot, chatID)
 
     _, err = bot.Send(doc)
     if err != nil {
@@ -1516,7 +1392,6 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
-        deleteLastMessage(bot, chatID)
         bot.Send(reply)
 
         if config.NotifGroupID != 0 {
@@ -1567,7 +1442,6 @@ func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
     if res["success"] == true {
         msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ Password `%s` berhasil *DIHAPUS*.", username))
         msg.ParseMode = "Markdown"
-        deleteLastMessage(bot, chatID)
         bot.Send(msg)
         showMainMenu(bot, chatID)
     } else {
@@ -1629,7 +1503,6 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, li
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
-        deleteLastMessage(bot, chatID)
         bot.Send(reply)
         showMainMenu(bot, chatID)
     } else {
@@ -1678,7 +1551,7 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
-        sendAndTrack(bot, reply)
+        bot.Send(reply)
     } else {
         sendMessage(bot, chatID, "❌ Gagal mengambil data daftar akun.")
     }
@@ -1713,7 +1586,6 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
-        deleteLastMessage(bot, chatID)
         bot.Send(reply)
         showMainMenu(bot, chatID)
     } else {
