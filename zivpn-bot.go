@@ -2,6 +2,7 @@ package main
 
 import (
     "bytes"
+    "context"
     "encoding/json"
     "fmt"
     "io"
@@ -26,6 +27,7 @@ const (
     MenuPhotoURL  = "https://h.uguu.se/LfWhbfvw.png"
 
     // ===== PAKASIR CONFIG =====
+    // PASTIKAN DATA INI BENAR
     PakasirSlug      = "riswan"
     PakasirAPIKey    = "wQpuwIM4iqZV0S23YpFgl23zCpvhXEsC"
     PakasirCreateURL = "https://app.pakasir.com/api/transactioncreate/qris"
@@ -152,14 +154,18 @@ func main() {
 func downloadQRImage(qrString string) (string, error) {
     qrURL := fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", qrString)
     
-    // Download file
-    resp, err := http.Get(qrURL)
+    // Gunakan Client dengan Timeout (PENTING) untuk mencegah bot hang
+    client := &http.Client{Timeout: 10 * time.Second}
+    
+    resp, err := client.Get(qrURL)
     if err != nil {
+        log.Printf("[Download QR] Error connect: %v", err)
         return "", err
     }
     defer resp.Body.Close()
 
     if resp.StatusCode != 200 {
+        log.Printf("[Download QR] Status Code: %d", resp.StatusCode)
         return "", fmt.Errorf("status code: %d", resp.StatusCode)
     }
 
@@ -188,6 +194,7 @@ func generateOrderID() string {
 }
 
 func createPakasirOrder(amount int) (string, string, error) {
+    log.Println("[Pakasir] Membuat Order...")
     orderID := generateOrderID()
     
     payload := PakasirCreateRequest{
@@ -204,22 +211,26 @@ func createPakasirOrder(amount int) (string, string, error) {
     client := &http.Client{Timeout: 15 * time.Second}
     resp, err := client.Do(req)
     if err != nil {
+        log.Printf("[Pakasir] Request Error: %v", err)
         return "", "", err
     }
     defer resp.Body.Close()
 
     body, _ := io.ReadAll(resp.Body)
+    log.Printf("[Pakasir] Raw Response: %s", string(body)) // Debugging
+
     var result PakasirResponse
     if err := json.Unmarshal(body, &result); err != nil {
-        log.Printf("Pakasir Raw Response: %s", string(body))
+        log.Printf("[Pakasir] Unmarshal Error: %v", err)
         return "", "", err
     }
 
     if result.Status != "success" {
-        log.Printf("Pakasir Error: %s - %s", result.Status, result.Message)
+        log.Printf("[Pakasir] API Error: %s - %s", result.Status, result.Message)
         return "", "", fmt.Errorf("Pakasir error: %s", result.Message)
     }
 
+    log.Println("[Pakasir] Order Berhasil Dibuat!")
     return orderID, result.Data.QrString, nil
 }
 
@@ -352,6 +363,8 @@ func handleGuestCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
     userID := query.From.ID
     chatID := query.Message.Chat.ID
 
+    log.Printf("[Guest Callback] ID: %d, Data: %s", userID, callbackData)
+
     switch callbackData {
     case "guest_start_purchase":
         setState(userID, "guest_password")
@@ -374,15 +387,20 @@ func handleGuestCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
 }
 
 func processGuestPlanSelection(bot *tgbotapi.BotAPI, chatID int64, userID int64, days int, price int) {
+    log.Printf("[Process Plan] UserID: %d, Days: %d", userID, days)
+    
+    // Kirim pesan status dulu agar user tahu bot hidup
     sendMessage(bot, chatID, "⏳ Sedang membuat transaksi di Pakasir...")
     
     // 1. Create Order di Pakasir
     orderID, qrString, err := createPakasirOrder(price)
     if err != nil {
-        sendMessage(bot, chatID, "❌ Gagal membuat pembayaran: "+err.Error())
+        sendMessage(bot, chatID, "❌ Gagal membuat pembayaran: "+err.Error()+"\n\nPastikan Slug dan API Key Pakasir sudah benar.")
         resetState(userID)
         return
     }
+
+    log.Printf("[Process Plan] Order ID: %s, QR String received", orderID)
 
     // 2. Simpan Data Transaksi
     stateMutex.Lock()
@@ -394,7 +412,9 @@ func processGuestPlanSelection(bot *tgbotapi.BotAPI, chatID int64, userID int64,
     tempUserData[userID]["order_id"] = orderID
     stateMutex.Unlock()
 
-    // 3. Download QR Image ke server lokal untuk stabilitas
+    // 3. Download QR Image (Menggunakan Goroutine supaya tidak blocking lama jika error)
+    // Tapi untuk memastikan pesan terkirim urut, kita pakai cara biasa dengan timeout
+    log.Println("[Process Plan] Attempting to download QR Image...")
     qrFilePath, err := downloadQRImage(qrString)
 
     // 4. Kirim Invoice ke User
@@ -415,33 +435,47 @@ func processGuestPlanSelection(bot *tgbotapi.BotAPI, chatID int64, userID int64,
     deleteLastMessage(bot, chatID)
     
     var sentMsg tgbotapi.Message
+    
+    // Logika Kirim: Prioritas Gambar, Jika Gagal -> Kirim Text String
     if err == nil {
-        // Kirim file lokal (Paling Stabil)
+        // Kirim file lokal (Sukses)
         photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(qrFilePath))
         photoMsg.Caption = textInvoice
         photoMsg.ParseMode = "Markdown"
         photoMsg.ReplyMarkup = keyboardPay
-        sentMsg, _ = bot.Send(photoMsg)
         
-        // Hapus file sementara setelah 5 detik (biarkan Telegram upload dulu)
-        time.AfterFunc(5*time.Second, func() {
-            os.Remove(qrFilePath)
-        })
+        sentMsg, err = bot.Send(photoMsg)
+        if err != nil {
+            log.Printf("Gagal Kirim Foto: %v", err)
+            // Fallback jika gagal kirim foto (misal: Telegram reject file)
+            fallbackText := textInvoice + fmt.Sprintf("\n\n⚠️ *Gambar gagal dimuat, gunakan kode di bawah:*\n`%s`", qrString)
+            msg := tgbotapi.NewMessage(chatID, fallbackText)
+            msg.ParseMode = "Markdown"
+            msg.ReplyMarkup = keyboardPay
+            sentMsg, _ = bot.Send(msg)
+        } else {
+            // Hapus file jika berhasil kirim
+            go func() {
+                time.Sleep(5 * time.Second)
+                os.Remove(qrFilePath)
+            }()
+        }
     } else {
-        // Fallback: Kirim Link QR String jika download gagal
-        log.Printf("Gagal download QR Image: %v", err)
-        fallbackText := textInvoice + fmt.Sprintf("\n\n⚠️ *Gambar gagal dimuat, gunakan link di bawah:*\n`%s`", qrString)
+        // Fallback: Gagal Download
+        log.Printf("[Process Plan] Download QR Gagal: %v", err)
+        fallbackText := textInvoice + fmt.Sprintf("\n\n⚠️ *Gagal memuat gambar QR, gunakan kode manual di bawah:*\n`%s`", qrString)
         msg := tgbotapi.NewMessage(chatID, fallbackText)
         msg.ParseMode = "Markdown"
         msg.ReplyMarkup = keyboardPay
-        msg.DisableWebPagePreview = false
         sentMsg, _ = bot.Send(msg)
     }
     
     // Simpan ID pesan invoice agar bisa diedit nanti
-    stateMutex.Lock()
-    tempUserData[userID]["invoice_msg_id"] = strconv.Itoa(sentMsg.MessageID)
-    stateMutex.Unlock()
+    if sentMsg.MessageID != 0 {
+        stateMutex.Lock()
+        tempUserData[userID]["invoice_msg_id"] = strconv.Itoa(sentMsg.MessageID)
+        stateMutex.Unlock()
+    }
 
     // 5. Mulai Loop Pengecekan Otomatis (Polling)
     go monitorPaymentStatus(bot, chatID, userID, orderID, price, days)
@@ -1236,7 +1270,7 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
     fileInfo, err := os.Stat(filePath)
     if os.IsNotExist(err) {
         log.Printf("❌ [DEBUG] File hilang setelah dibuat: %s", filePath)
-        sendMessage(bot, msg.Chat.ID, "❌ Error Aneh: File backup hilang setelah dibuat.")
+        sendMessage(bot, chatID, "❌ Error Aneh: File backup hilang setelah dibuat.")
         return
     }
 
