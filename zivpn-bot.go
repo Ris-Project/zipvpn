@@ -71,8 +71,8 @@ type PakasirResponse struct {
     Status  string `json:"status"`
     Message string `json:"message"`
     Data    struct {
-        QrString string `json:"qr_string"` // Untuk Create
-        Status   string `json:"status"`    // Untuk Check (paid/unpaid)
+        QrString string `json:"qr_string"` 
+        Status   string `json:"status"`    
     } `json:"data"`
 }
 
@@ -147,6 +147,39 @@ func main() {
 }
 
 // =========================================================================
+// --- HELPER DOWNLOAD QR CODE ---
+// =========================================================================
+func downloadQRImage(qrString string) (string, error) {
+    qrURL := fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", qrString)
+    
+    // Download file
+    resp, err := http.Get(qrURL)
+    if err != nil {
+        return "", err
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != 200 {
+        return "", fmt.Errorf("status code: %d", resp.StatusCode)
+    }
+
+    // Buat file sementara
+    tmpFile := "/tmp/qr_" + strconv.FormatInt(time.Now().Unix(), 10) + ".png"
+    out, err := os.Create(tmpFile)
+    if err != nil {
+        return "", err
+    }
+    defer out.Close()
+
+    _, err = io.Copy(out, resp.Body)
+    if err != nil {
+        return "", err
+    }
+
+    return tmpFile, nil
+}
+
+// =========================================================================
 // --- PAKASIR API INTEGRATION ---
 // =========================================================================
 
@@ -168,7 +201,7 @@ func createPakasirOrder(amount int) (string, string, error) {
     req, _ := http.NewRequest("POST", PakasirCreateURL, bytes.NewBuffer(jsonData))
     req.Header.Set("Content-Type", "application/json")
 
-    client := &http.Client{Timeout: 10 * time.Second}
+    client := &http.Client{Timeout: 15 * time.Second}
     resp, err := client.Do(req)
     if err != nil {
         return "", "", err
@@ -178,10 +211,12 @@ func createPakasirOrder(amount int) (string, string, error) {
     body, _ := io.ReadAll(resp.Body)
     var result PakasirResponse
     if err := json.Unmarshal(body, &result); err != nil {
+        log.Printf("Pakasir Raw Response: %s", string(body))
         return "", "", err
     }
 
     if result.Status != "success" {
+        log.Printf("Pakasir Error: %s - %s", result.Status, result.Message)
         return "", "", fmt.Errorf("Pakasir error: %s", result.Message)
     }
 
@@ -332,16 +367,15 @@ func handleGuestCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
         bot.Request(tgbotapi.NewCallback(query.ID, "Membuat Invoice..."))
         processGuestPlanSelection(bot, chatID, userID, 60, 20000)
     
-    // Tombol Cek Manual (Opsional jika polling belum selesai)
     case "manual_check":
         bot.Request(tgbotapi.NewCallback(query.ID, "Mengecek status..."))
-        // Logic bisa ditambahkan disini jika ingin manual check,
-        // tapi polling otomatis sudah aktif.
         sendMessage(bot, chatID, "Bot sedang mengecek status pembayaran secara otomatis setiap 5 detik.")
     }
 }
 
 func processGuestPlanSelection(bot *tgbotapi.BotAPI, chatID int64, userID int64, days int, price int) {
+    sendMessage(bot, chatID, "⏳ Sedang membuat transaksi di Pakasir...")
+    
     // 1. Create Order di Pakasir
     orderID, qrString, err := createPakasirOrder(price)
     if err != nil {
@@ -360,8 +394,8 @@ func processGuestPlanSelection(bot *tgbotapi.BotAPI, chatID int64, userID int64,
     tempUserData[userID]["order_id"] = orderID
     stateMutex.Unlock()
 
-    // 3. Generate Image URL dari QR String
-    qrImageURL := fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", qrString)
+    // 3. Download QR Image ke server lokal untuk stabilitas
+    qrFilePath, err := downloadQRImage(qrString)
 
     // 4. Kirim Invoice ke User
     textInvoice := fmt.Sprintf("💳 *INVOICE PEMBELIAN*\n\n"+
@@ -378,14 +412,31 @@ func processGuestPlanSelection(bot *tgbotapi.BotAPI, chatID int64, userID int64,
         ),
     )
 
-    photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FileURL(qrImageURL))
-    photoMsg.Caption = textInvoice
-    photoMsg.ParseMode = "Markdown"
-    photoMsg.ReplyMarkup = keyboardPay
-    
     deleteLastMessage(bot, chatID)
     
-    sentMsg, _ := bot.Send(photoMsg)
+    var sentMsg tgbotapi.Message
+    if err == nil {
+        // Kirim file lokal (Paling Stabil)
+        photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(qrFilePath))
+        photoMsg.Caption = textInvoice
+        photoMsg.ParseMode = "Markdown"
+        photoMsg.ReplyMarkup = keyboardPay
+        sentMsg, _ = bot.Send(photoMsg)
+        
+        // Hapus file sementara setelah 5 detik (biarkan Telegram upload dulu)
+        time.AfterFunc(5*time.Second, func() {
+            os.Remove(qrFilePath)
+        })
+    } else {
+        // Fallback: Kirim Link QR String jika download gagal
+        log.Printf("Gagal download QR Image: %v", err)
+        fallbackText := textInvoice + fmt.Sprintf("\n\n⚠️ *Gambar gagal dimuat, gunakan link di bawah:*\n`%s`", qrString)
+        msg := tgbotapi.NewMessage(chatID, fallbackText)
+        msg.ParseMode = "Markdown"
+        msg.ReplyMarkup = keyboardPay
+        msg.DisableWebPagePreview = false
+        sentMsg, _ = bot.Send(msg)
+    }
     
     // Simpan ID pesan invoice agar bisa diedit nanti
     stateMutex.Lock()
@@ -487,7 +538,7 @@ func createPurchasedAccount(bot *tgbotapi.BotAPI, chatID int64, userID int64, pa
 
     reply := tgbotapi.NewMessage(chatID, msgSuccess)
     reply.ParseMode = "Markdown"
-    deleteLastMessage(bot, chatID) // Hapus pesan pembayaran
+    deleteLastMessage(bot, chatID)
     bot.Send(reply)
     
     resetState(userID)
@@ -1185,7 +1236,7 @@ func performManualBackup(bot *tgbotapi.BotAPI, chatID int64) {
     fileInfo, err := os.Stat(filePath)
     if os.IsNotExist(err) {
         log.Printf("❌ [DEBUG] File hilang setelah dibuat: %s", filePath)
-        sendMessage(bot, chatID, "❌ Error Aneh: File backup hilang setelah dibuat.")
+        sendMessage(bot, msg.Chat.ID, "❌ Error Aneh: File backup hilang setelah dibuat.")
         return
     }
 
@@ -1404,7 +1455,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
     if res["success"] == true {
         data, ok := res["data"].(map[string]interface{})
         if !ok {
-            sendMessage(bot, chatID, "❌ Gagal: Format data respons dari API tidak valid.")
+            sendMessage(bot, msg.Chat.ID, "❌ Gagal: Format data respons dari API tidak valid.")
             return
         }
 
