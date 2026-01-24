@@ -471,7 +471,6 @@ func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
         // --- Server & Info ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
-            tgbotapi.NewInlineKeyboardButtonData("🗑️ Hapus Expired", "menu_clean_restart"),
         ),
         // --- Backup & Restore ---
         tgbotapi.NewInlineKeyboardRow(
@@ -488,7 +487,6 @@ func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
             tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali ke Menu", "cancel"),
         ),
     )
-
     msg := tgbotapi.NewMessage(chatID, "⚙️ *PENGATURAN SISTEM & MENU*\n\nSilakan pilih menu di bawah ini:")
     msg.ParseMode = "Markdown"
     msg.ReplyMarkup = keyboard
