@@ -241,16 +241,19 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
             tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")),
         )
         sendAndTrack(bot, msg)
+    
+    // --- TOMBOL PENGATURAN ---
+    case callbackData == "menu_settings":
+        showSettingsMenu(bot, query.Message.Chat.ID)
+    // -------------------------
 
     case callbackData == "menu_set_vps_date":
         setState(query.From.ID, "set_vps_date")
         sendMessage(bot, query.Message.Chat.ID, "📅 *SET VPS EXPIRED*\n\nSilakan masukkan tanggal expired VPS.\n\nFormat: `YYYY-MM-DD`\nContoh: `2024-12-31`")
 
-    // --- FITUR BARU: TOMBOL SET GRUP ---
     case callbackData == "menu_set_group":
         setState(query.From.ID, "set_group_id")
         sendMessage(bot, query.Message.Chat.ID, "🔔 *SET NOTIFIKASI GRUP*\n\nSilakan masukkan ID Grup Telegram.\n\nContoh: `-1001234567890`")
-    // -----------------------------------
 
     case callbackData == "menu_clean_restart":
         cleanAndRestartService(bot, query.Message.Chat.ID)
@@ -457,6 +460,48 @@ func getTempData(userID int64) (map[string]string, bool) {
     return data, ok
 }
 
+// --- FUNGSI SETTINGS MENU (MEMUAT SEMUA TOMBOL LAIN) ---
+func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
+    keyboard := tgbotapi.NewInlineKeyboardMarkup(
+        // --- Manajemen User ---
+        tgbotapi.NewInlineKeyboardRow(
+            tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
+            tgbotapi.NewInlineKeyboardButtonData("🗑️ Delete Akun", "menu_delete"),
+        ),
+        // --- Server & Info ---
+        tgbotapi.NewInlineKeyboardRow(
+            tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
+            tgbotapi.NewInlineKeyboardButtonData("🗑️ Hapus Expired", "menu_clean_restart"),
+        ),
+        // --- Backup & Restore ---
+        tgbotapi.NewInlineKeyboardRow(
+            tgbotapi.NewInlineKeyboardButtonData("💾 Backup User", "menu_backup"),
+            tgbotapi.NewInlineKeyboardButtonData("♻️ Restore User", "menu_restore"),
+        ),
+        // --- Konfigurasi Bot/VPS ---
+        tgbotapi.NewInlineKeyboardRow(
+            tgbotapi.NewInlineKeyboardButtonData("⚠️ Set VPS Exp", "menu_set_vps_date"),
+            tgbotapi.NewInlineKeyboardButtonData("🔔 Set Grup", "menu_set_group"),
+        ),
+        // --- Kembali ---
+        tgbotapi.NewInlineKeyboardRow(
+            tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali ke Menu", "cancel"),
+        ),
+    )
+
+    msg := tgbotapi.NewMessage(chatID, "⚙️ *PENGATURAN SISTEM & MENU*\n\nSilakan pilih menu di bawah ini:")
+    msg.ParseMode = "Markdown"
+    msg.ReplyMarkup = keyboard
+    deleteLastMessage(bot, chatID)
+    
+    sentMsg, err := bot.Send(msg)
+    if err == nil {
+        stateMutex.Lock()
+        lastMessageIDs[chatID] = sentMsg.MessageID
+        stateMutex.Unlock()
+    }
+}
+
 func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
     resetState(msg.From.ID)
     sendMessage(bot, msg.Chat.ID, "⏳ Sedang mengunduh dan memproses file backup...")
@@ -598,14 +643,12 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 }
 
 // showMainMenu dimodifikasi untuk selalu reload config dari file
-// agar menampilkan data VPS Expired dan Notifikasi Grup terbaru.
+// dan HANYA memiliki 4 tombol.
 func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
     // RELOAD CONFIG DARI FILE
-    // Ini memastikan data selalu fresh (fix bug VPS expired revert)
     config, err := loadConfig()
     if err != nil {
         log.Printf("Error loading config in showMainMenu: %v", err)
-        // Gunakan default kosong jika error agar bot tidak crash
         config = BotConfig{}
     }
 
@@ -632,7 +675,6 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         notifStatus = "❌ Off"
     }
 
-    // --- HITUNG UPTIME BOT ---
     uptimeDuration := time.Since(startTime)
     uptimeStr := fmt.Sprintf("%d Jam %d Menit", int(uptimeDuration.Hours()), int(uptimeDuration.Minutes())%60)
     if uptimeDuration.Hours() > 24 {
@@ -641,7 +683,6 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         uptimeStr = fmt.Sprintf("%d Hari %d Jam", days, hours)
     }
 
-    // --- HITUNG MUNDUR VPS ---
     vpsInfo := "⚠️ Belum diatur"
     if config.VpsExpiredDate != "" {
         expDate, err := time.Parse("2006-01-02", config.VpsExpiredDate)
@@ -673,31 +714,15 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 
     deleteLastMessage(bot, chatID)
 
+    // --- MENU UTAMA HANYA 4 TOMBOL ---
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("🎁 Trial Akun", "menu_trial"),
             tgbotapi.NewInlineKeyboardButtonData("➕ Create Akun", "menu_create"),
         ),
         tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
-            tgbotapi.NewInlineKeyboardButtonData("🗑️ Delete Akun", "menu_delete"),
-        ),
-        tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("📋 List Akun", "menu_list"),
-            tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
-        ),
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("💾 Backup User", "menu_backup"),
-            tgbotapi.NewInlineKeyboardButtonData("♻️ Restore User", "menu_restore"),
-        ),
-        tgbotapi.NewInlineKeyboardRow(
-            // Tombol Set VPS Expired
-            tgbotapi.NewInlineKeyboardButtonData("⚠️ Set VPS Exp", "menu_set_vps_date"),
-            // Tombol Baru: Set Grup
-            tgbotapi.NewInlineKeyboardButtonData("🔔 Set Grup", "menu_set_group"),
-        ),
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("🗑️ Hapus Expired & Restart", "menu_clean_restart"),
+            tgbotapi.NewInlineKeyboardButtonData("⚙️ Pengaturan", "menu_settings"),
         ),
     )
 
@@ -719,7 +744,6 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
     }
 }
 
-// --- LIST USERS DENGAN PAGINATION (PERBAIKAN) ---
 func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
     res, err := apiCall("GET", "/users", nil)
     if err != nil {
@@ -755,7 +779,6 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
             end = len(users)
         }
 
-        // Bangun pesan berdasarkan slice user saat ini
         msg := fmt.Sprintf("📋 *DAFTAR AKUN ZIVPN* (Hal: %d/%d)\n\n", page, totalPages)
         for i := start; i < end; i++ {
             user, ok := users[i].(map[string]interface{})
@@ -770,7 +793,6 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
             msg += fmt.Sprintf("%d. %s `%s`\n    _Kadaluarsa: %s_\n", (i+1), statusIcon, user["password"], user["expired"])
         }
 
-        // Bangun tombol navigasi
         var rows [][]tgbotapi.InlineKeyboardButton
         var navRow []tgbotapi.InlineKeyboardButton
         
@@ -1046,8 +1068,6 @@ func restartVpnService() error {
     return cmd.Run()
 }
 
-// autoDeleteExpiredUsers: Fungsi inti untuk menghapus expired dan me-restart service
-// shouldRestart: flag penanda apakah ini dipanggil manual (true) atau background (false)
 func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart bool) {
     users, err := getUsers()
     if err != nil {
@@ -1059,21 +1079,15 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
     var deletedUsers []string
 
     for _, u := range users {
-        // 1. Parse tanggal expired dari string ke Time object
         expiredTime, err := time.Parse("2006-01-02", u.Expired)
         if err != nil {
-            // Coba format dengan jam jika format tanggal saja gagal
             expiredTime, err = time.Parse("2006-01-02 15:04:05", u.Expired)
             if err != nil {
-                // Jika format tanggal kacau, skip user ini
                 continue
             }
         }
 
-        // 2. Logika Utama: Cek apakah waktu SEKARANG sudah melebihi waktu EXPIRED
         if time.Now().After(expiredTime) {
-
-            // Lakukan penghapusan via API
             res, err := apiCall("POST", "/user/delete", map[string]interface{}{
                 "password": u.Password,
             })
@@ -1093,15 +1107,11 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
         }
     }
 
-    // --- PERBAIKAN: Restart Service Otomatis ---
-    // Kita restart service JIKA ADA user yang dihapus (deletedCount > 0).
-    // Ini dilakukan baik untuk trigger manual maupun background (auto delete).
     if deletedCount > 0 {
         log.Printf("🔄 [AutoDelete] %d user kadaluwarsa dihapus. Melakukan restart service %s...", deletedCount, ServiceName)
 
         if err := restartVpnService(); err != nil {
             log.Printf("❌ Gagal restart service: %v", err)
-            // Jika manual, beritahu admin jika gagal restart
             if bot != nil && shouldRestart {
                 bot.Send(tgbotapi.NewMessage(adminID, "❌ Gagal merestart service. Cek log server."))
             }
@@ -1110,9 +1120,6 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
         }
     }
 
-    // --- Logika Notifikasi Admin ---
-
-    // Jika dipanggil dari Menu Manual (shouldRestart == true)
     if shouldRestart {
         if bot != nil {
             if deletedCount > 0 {
@@ -1121,14 +1128,11 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
                 bot.Send(tgbotapi.NewMessage(adminID, "✅ Tidak ada akun kadaluwarsa. Tidak perlu restart service."))
             }
         }
-        return // Selesai untuk manual trigger
+        return 
     }
 
-    // Jika dipanggil dari Background Loop (shouldRestart == false)
-    // Kirim notifikasi list user yang dihapus
     if deletedCount > 0 {
         if bot != nil {
-            // Batasi pesan agar tidak spam
             userListStr := strings.Join(deletedUsers, ", ")
             if len(userListStr) > 500 {
                 userListStr = userListStr[:500] + "..."
@@ -1263,8 +1267,11 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
             "📍 *Lokasi Server*: `%s`\n"+
             "📡 *ISP Server*: `%s`\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-            "🔒 *Private Tidak Digunakan User Lain*\n"+
-            "⚡ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
+            "⚡ *Koneksi Jaringan Bagus & Cepat*\n"+
+            "✅ *Nonton Youtube Stabil HD*\n"+
+            "✅ *Gaming Stabil & Anti Lag*\n"+
+            "✅ *Respon Cepat Tanpa Delay*\n"+
+            "✅ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━",
             title, data["password"], data["domain"], data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
@@ -1293,6 +1300,12 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
                 "💾 *Limit Kuota*: `%d GB`\n"+
                 "📍 *Lokasi Server*: `%s`\n"+
                 "📡 *ISP Server*: `%s`\n"+
+                "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
+                "⚡ *Koneksi Jaringan Bagus & Cepat*\n"+
+                "✅ *Nonton Youtube Stabil HD*\n"+
+                "✅ *Gaming Stabil & Anti Lag*\n"+
+                "✅ *Respon Cepat Tanpa Delay*\n"+
+                "✅ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
                 "━━━━━━━━━━━━━━━━━━━━━━━━━\n",
                 title, maskedPass, maskedDomain, data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
@@ -1386,6 +1399,12 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, li
             "💾 *Limit Kuota*: `%d GB`\n"+
             "📍 *Lokasi Server*: `%s`\n"+
             "📡 *ISP Server*: `%s`\n"+
+            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
+            "⚡ *Koneksi Jaringan Bagus & Cepat*\n"+
+            "✅ *Nonton Youtube Stabil HD*\n"+
+            "✅ *Gaming Stabil & Anti Lag*\n"+
+            "✅ *Respon Cepat Tanpa Delay*\n"+
+            "✅ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━",
             days, data["password"], domain, data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
