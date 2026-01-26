@@ -111,6 +111,11 @@ func main() {
         }
     }()
 
+    // --- BACKGROUND WORKER (AUTO TRIAL 07:02) ---
+    go func() {
+        autoCreateTrial(bot, config.AdminID)
+    }()
+
     u := tgbotapi.NewUpdate(0)
     u.Timeout = 60
 
@@ -121,6 +126,50 @@ func main() {
             handleMessage(bot, update.Message, config.AdminID)
         } else if update.CallbackQuery != nil {
             handleCallback(bot, update.CallbackQuery, config.AdminID)
+        }
+    }
+}
+
+// --- AUTO TRIAL SETIAP JAM 07:02 ---
+func autoCreateTrial(bot *tgbotapi.BotAPI, adminID int64) {
+    // Ticker setiap 1 menit untuk mengecek waktu
+    ticker := time.NewTicker(1 * time.Minute)
+
+    // Variabel penanda untuk memastikan script hanya jalan sekali dalam sehari
+    // disaat jam 07:02
+    var lastRunDay int = -1
+
+    for range ticker.C {
+        now := time.Now()
+        currentDay := now.Day()
+
+        // Cek apakah waktu sekarang adalah 07:02
+        if now.Hour() == 7 && now.Minute() == 2 {
+            // Cek apakah proses ini belum dijalankan hari ini
+            if lastRunDay != currentDay {
+                log.Println("🚀 [Auto Trial] Waktunya membuat akun trial otomatis...")
+
+                // Reload config agar NotifGroupID selalu update
+                cfg, err := loadConfig()
+                if err != nil {
+                    log.Printf("❌ [Auto Trial] Gagal memuat konfigurasi: %v", err)
+                    // Kita set lastRunDay agar tidak spam error terus menerus sebelum config diperbaiki
+                    lastRunDay = currentDay
+                    continue
+                }
+
+                // Generate password acak (sesuai fungsi yang sudah ada)
+                randomPass := generateRandomPassword(4)
+
+                // Buat user dengan durasi 1 hari, limit 1 IP, dan kuota 1 GB
+                // ChatID diset ke adminID agar admin menerima laporan pembuatan akun
+                createUser(bot, adminID, randomPass, 1, 1, 1, cfg)
+
+                log.Printf("✅ [Auto Trial] Berhasil membuat akun trial: %s", randomPass)
+
+                // Tandai hari ini sudah dijalankan
+                lastRunDay = currentDay
+            }
         }
     }
 }
@@ -241,7 +290,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
             tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")),
         )
         sendAndTrack(bot, msg)
-    
+
     // --- TOMBOL PENGATURAN ---
     case callbackData == "menu_settings":
         showSettingsMenu(bot, query.Message.Chat.ID)
@@ -266,7 +315,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         parts := strings.Split(callbackData, ":")
         action := parts[0][5:] // list, delete, renew
         page, _ := strconv.Atoi(parts[1])
-        
+
         // Routing pagination
         if action == "list" {
             listUsers(bot, query.Message.Chat.ID, page)
@@ -491,7 +540,7 @@ func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
     msg.ParseMode = "Markdown"
     msg.ReplyMarkup = keyboard
     deleteLastMessage(bot, chatID)
-    
+
     sentMsg, err := bot.Send(msg)
     if err == nil {
         stateMutex.Lock()
@@ -793,14 +842,14 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
 
         var rows [][]tgbotapi.InlineKeyboardButton
         var navRow []tgbotapi.InlineKeyboardButton
-        
+
         if page > 1 {
             navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("⬅️ Prev", fmt.Sprintf("page_list:%d", page-1)))
         }
         if page < totalPages {
             navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("Next ➡️", fmt.Sprintf("page_list:%d", page+1)))
         }
-        
+
         if len(navRow) > 0 {
             rows = append(rows, navRow)
         }
@@ -1126,7 +1175,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
                 bot.Send(tgbotapi.NewMessage(adminID, "✅ Tidak ada akun kadaluwarsa. Tidak perlu restart service."))
             }
         }
-        return 
+        return
     }
 
     if deletedCount > 0 {
