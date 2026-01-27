@@ -26,8 +26,6 @@ const (
     // !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
     MenuPhotoURL = "https://h.uguu.se/LfWhbfvw.png"
 
-    // Interval untuk pengecekan dan penghapusan akun expired
-    AutoDeleteInterval = 30 * time.Second
     // Interval untuk Auto Backup (3 jam)
     AutoBackupInterval = 3 * time.Hour
 
@@ -93,12 +91,46 @@ func main() {
     bot.Debug = false
     log.Printf("Authorized on account %s", bot.Self.UserName)
 
-    // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS) ---
+    // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS & AUTO TRIAL) ---
+    // Modifikasi: Jadwal Delete jam 00:00, Trial 2 menit setelahnya
     go func() {
-        autoDeleteExpiredUsers(bot, config.AdminID, false)
-        ticker := time.NewTicker(AutoDeleteInterval)
-        for range ticker.C {
+        for {
+            now := time.Now()
+
+            // 1. Tentukan target waktu 00:00 (Tengah Malam)
+            nextMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+            // Jika sekarang sudah lewat dari 00:00 hari ini, targetkan ke 00:00 besok
+            if now.After(nextMidnight) {
+                nextMidnight = nextMidnight.AddDate(0, 0, 1)
+            }
+
+            // Hitung durasi tunggu
+            duration := nextMidnight.Sub(now)
+            log.Printf("⏰ [System] Menunggu jadwal rutin 00:00. Sisa waktu: %v", duration)
+            time.Sleep(duration)
+
+            // 2. Jalankan Auto Delete
+            log.Println("🗑️ [AutoDelete] Memulai pembersihan akun expired...")
             autoDeleteExpiredUsers(bot, config.AdminID, false)
+
+            // 3. Reload Config (Penting untuk mengambil ID Grup notifikasi terbaru)
+            currentCfg, err := loadConfig()
+            if err != nil {
+                log.Printf("❌ Gagal reload config untuk auto trial: %v", err)
+                currentCfg = config // Fallback ke config awal
+            }
+
+            // 4. Tunggu 2 Menit setelah delete selesai
+            log.Println("⏳ [System] Auto Delete selesai. Menunggu 2 menit sebelum Auto Trial...")
+            time.Sleep(2 * time.Minute)
+
+            // 5. Jalankan Auto Trial
+            log.Println("🎁 [AutoTrial] Membuat akun trial otomatis...")
+            randomPass := generateRandomPassword(4) // Generate password random 4 karakter
+
+            // Panggil fungsi createUser (Durasi 1 hari, Limit IP 1, Quota 1 GB)
+            createUser(bot, currentCfg.AdminID, randomPass, 1, 1, 1, currentCfg)
         }
     }()
 
@@ -111,11 +143,6 @@ func main() {
         }
     }()
 
-    // --- BACKGROUND WORKER (AUTO TRIAL 07:02) ---
-    go func() {
-        autoCreateTrial(bot, config.AdminID)
-    }()
-
     u := tgbotapi.NewUpdate(0)
     u.Timeout = 60
 
@@ -126,50 +153,6 @@ func main() {
             handleMessage(bot, update.Message, config.AdminID)
         } else if update.CallbackQuery != nil {
             handleCallback(bot, update.CallbackQuery, config.AdminID)
-        }
-    }
-}
-
-// --- AUTO TRIAL SETIAP JAM 07:02 ---
-func autoCreateTrial(bot *tgbotapi.BotAPI, adminID int64) {
-    // Ticker setiap 1 menit untuk mengecek waktu
-    ticker := time.NewTicker(1 * time.Minute)
-
-    // Variabel penanda untuk memastikan script hanya jalan sekali dalam sehari
-    // disaat jam 07:02
-    var lastRunDay int = -1
-
-    for range ticker.C {
-        now := time.Now()
-        currentDay := now.Day()
-
-        // Cek apakah waktu sekarang adalah 07:02
-        if now.Hour() == 7 && now.Minute() == 2 {
-            // Cek apakah proses ini belum dijalankan hari ini
-            if lastRunDay != currentDay {
-                log.Println("🚀 [Auto Trial] Waktunya membuat akun trial otomatis...")
-
-                // Reload config agar NotifGroupID selalu update
-                cfg, err := loadConfig()
-                if err != nil {
-                    log.Printf("❌ [Auto Trial] Gagal memuat konfigurasi: %v", err)
-                    // Kita set lastRunDay agar tidak spam error terus menerus sebelum config diperbaiki
-                    lastRunDay = currentDay
-                    continue
-                }
-
-                // Generate password acak (sesuai fungsi yang sudah ada)
-                randomPass := generateRandomPassword(4)
-
-                // Buat user dengan durasi 1 hari, limit 1 IP, dan kuota 1 GB
-                // ChatID diset ke adminID agar admin menerima laporan pembuatan akun
-                createUser(bot, adminID, randomPass, 1, 1, 1, cfg)
-
-                log.Printf("✅ [Auto Trial] Berhasil membuat akun trial: %s", randomPass)
-
-                // Tandai hari ini sudah dijalankan
-                lastRunDay = currentDay
-            }
         }
     }
 }
