@@ -26,6 +26,8 @@ const (
     // !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
     MenuPhotoURL = "https://h.uguu.se/LfWhbfvw.png"
 
+    // Interval untuk pengecekan dan penghapusan akun expired
+    AutoDeleteInterval = 30 * time.Second
     // Interval untuk Auto Backup (3 jam)
     AutoBackupInterval = 3 * time.Hour
 
@@ -39,12 +41,10 @@ var ApiKey = "AutoFtBot-agskjgdvsbdreiWG1234512SDKrqw"
 var startTime time.Time // Global variable untuk menghitung uptime bot
 
 type BotConfig struct {
-    BotToken       string `json:"bot_token"`
-    AdminID        int64  `json:"admin_id"`
-    NotifGroupID   int64  `json:"notif_group_id"`
+    BotToken      string `json:"bot_token"`
+    AdminID       int64  `json:"admin_id"`
+    NotifGroupID  int64  `json:"notif_group_id"`
     VpsExpiredDate string `json:"vps_expired_date"` // Format: 2006-01-02
-    AutoTrialTime  string `json:"auto_trial_time"`  // Format: 15:04
-    AutoDeleteTime string `json:"auto_delete_time"` // Format: 15:04
 }
 
 type IpInfo struct {
@@ -93,51 +93,14 @@ func main() {
     bot.Debug = false
     log.Printf("Authorized on account %s", bot.Self.UserName)
 
-    // --- BACKGROUND WORKER (AUTO TRIAL & AUTO DELETE TERPADU) ---
-    // Menggantikan worker 30 detik lama dengan worker 1 menit yang jadwal-savvy
+    // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS) ---
     go func() {
-        var lastAutoTrialRun string
-        var lastAutoDeleteRun string
-
-        // Tunggu 1 menit pertama agar bot siap
-        time.Sleep(1 * time.Minute)
-
-        ticker := time.NewTicker(1 * time.Minute)
+        autoDeleteExpiredUsers(bot, config.AdminID, false)
+        ticker := time.NewTicker(AutoDeleteInterval)
         for range ticker.C {
-            cfg, err := loadConfig()
-            if err != nil {
-                continue
-            }
-
-            now := time.Now()
-            currentTime := now.Format("15:04")
-            todayDateKey := now.Format("2006-01-02") + " " + currentTime
-
-            // 1. LOGIKA AUTO TRIAL
-            if cfg.AutoTrialTime != "" {
-                if currentTime == cfg.AutoTrialTime && lastAutoTrialRun != todayDateKey {
-                    log.Printf("🤖 [AutoTrial] Waktu matched! Membuat akun trial...")
-                    randomPass := generateRandomPassword(4)
-                    bot.Send(tgbotapi.NewMessage(cfg.AdminID, "⏳ [SYSTEM] Sedang membuat akun auto trial..."))
-                    createUser(bot, cfg.AdminID, randomPass, 1, 1, 1, cfg)
-                    lastAutoTrialRun = todayDateKey
-                    log.Printf("✅ [AutoTrial] Selesai.")
-                }
-            }
-
-            // 2. LOGIKA AUTO DELETE
-            if cfg.AutoDeleteTime != "" {
-                if currentTime == cfg.AutoDeleteTime && lastAutoDeleteRun != todayDateKey {
-                    log.Printf("🧹 [AutoDelete] Waktu matched! Membersihkan user expired...")
-                    // shouldRestart: true (agar laporan dikirim ke admin)
-                    autoDeleteExpiredUsers(bot, cfg.AdminID, true)
-                    lastAutoDeleteRun = todayDateKey
-                    log.Printf("✅ [AutoDelete] Selesai.")
-                }
-            }
+            autoDeleteExpiredUsers(bot, config.AdminID, false)
         }
     }()
-    // -------------------------------------------------------------
 
     // --- BACKGROUND WORKER (AUTO BACKUP) ---
     go func() {
@@ -278,7 +241,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
             tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")),
         )
         sendAndTrack(bot, msg)
-
+    
     // --- TOMBOL PENGATURAN ---
     case callbackData == "menu_settings":
         showSettingsMenu(bot, query.Message.Chat.ID)
@@ -292,28 +255,6 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         setState(query.From.ID, "set_group_id")
         sendMessage(bot, query.Message.Chat.ID, "🔔 *SET NOTIFIKASI GRUP*\n\nSilakan masukkan ID Grup Telegram.\n\nContoh: `-1001234567890`")
 
-    // --- TAMBAHAN SET TRIAL TIME ---
-    case callbackData == "menu_set_trial_time":
-        setState(query.From.ID, "set_trial_time")
-        currentCfg, _ := loadConfig()
-        currentStatus := "Belum diatur"
-        if currentCfg.AutoTrialTime != "" {
-            currentStatus = currentCfg.AutoTrialTime
-        }
-        sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("🕒 *SET JAM AUTO TRIAL*\n\nSaat ini: `%s`\n\nSilakan masukkan jam (Format 24 Jam: `HH:MM`).\n\nContoh: `08:00` atau `20:30`", currentStatus))
-    // ------------------------------
-
-    // --- TAMBAHAN SET DELETE TIME ---
-    case callbackData == "menu_set_delete_time":
-        setState(query.From.ID, "set_delete_time")
-        currentCfg, _ := loadConfig()
-        currentStatus := "Belum diatur (Manual)"
-        if currentCfg.AutoDeleteTime != "" {
-            currentStatus = currentCfg.AutoDeleteTime
-        }
-        sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("🗑️ *SET JAM AUTO DELETE*\n\nSaat ini: `%s`\n\nSilakan masukkan jam (Format 24 Jam: `HH:MM`).\n\nContoh: `00:00` atau `06:00`", currentStatus))
-    // --------------------------------
-
     case callbackData == "menu_clean_restart":
         cleanAndRestartService(bot, query.Message.Chat.ID)
 
@@ -325,7 +266,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         parts := strings.Split(callbackData, ":")
         action := parts[0][5:] // list, delete, renew
         page, _ := strconv.Atoi(parts[1])
-
+        
         // Routing pagination
         if action == "list" {
             listUsers(bot, query.Message.Chat.ID, page)
@@ -412,58 +353,6 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
         resetState(userID)
         sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Tanggal Expired VPS berhasil diupdate ke: `%s`", text))
         showMainMenu(bot, msg.Chat.ID) // Akan reload config otomatis
-
-    // --- STATE BARU: SET TRIAL TIME ---
-    case "set_trial_time":
-        // Validasi format waktu HH:MM
-        _, err := time.Parse("15:04", text)
-        if err != nil {
-            sendMessage(bot, msg.Chat.ID, "❌ Format waktu salah.\nGunakan format `HH:MM` (24 Jam).\nContoh: `08:00` atau `23:45`")
-            return
-        }
-
-        currentCfg, err := loadConfig()
-        if err != nil {
-            sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
-            return
-        }
-
-        currentCfg.AutoTrialTime = text
-        if err := saveConfig(currentCfg); err != nil {
-            sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
-            return
-        }
-
-        resetState(userID)
-        sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Jam Auto Trial berhasil diupdate ke: `%s`\n\nBot akan otomatis membuat akun trial setiap hari pada jam tersebut.", text))
-        showMainMenu(bot, msg.Chat.ID)
-    // ---------------------------------
-
-    // --- STATE BARU: SET DELETE TIME ---
-    case "set_delete_time":
-        // Validasi format waktu HH:MM
-        _, err := time.Parse("15:04", text)
-        if err != nil {
-            sendMessage(bot, msg.Chat.ID, "❌ Format waktu salah.\nGunakan format `HH:MM` (24 Jam).\nContoh: `00:00` atau `12:30`")
-            return
-        }
-
-        currentCfg, err := loadConfig()
-        if err != nil {
-            sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
-            return
-        }
-
-        currentCfg.AutoDeleteTime = text
-        if err := saveConfig(currentCfg); err != nil {
-            sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
-            return
-        }
-
-        resetState(userID)
-        sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Jam Auto Delete berhasil diupdate ke: `%s`\n\nBot akan membersihkan akun expired dan merestart service setiap hari pada jam tersebut.", text))
-        showMainMenu(bot, msg.Chat.ID)
-    // ---------------------------------
 
     case "create_username":
         stateMutex.Lock()
@@ -593,13 +482,6 @@ func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
             tgbotapi.NewInlineKeyboardButtonData("⚠️ Set VPS Exp", "menu_set_vps_date"),
             tgbotapi.NewInlineKeyboardButtonData("🔔 Set Grup", "menu_set_group"),
         ),
-        // --- Jadwal Otomatis ---
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("🕒 Jam Trial", "menu_set_trial_time"),
-            tgbotapi.NewInlineKeyboardButtonData("🗑️ Jam Delete", "menu_set_delete_time"),
-        ),
-        // -----------------------
-
         // --- Kembali ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali ke Menu", "cancel"),
@@ -609,7 +491,7 @@ func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
     msg.ParseMode = "Markdown"
     msg.ReplyMarkup = keyboard
     deleteLastMessage(bot, chatID)
-
+    
     sentMsg, err := bot.Send(msg)
     if err == nil {
         stateMutex.Lock()
@@ -791,18 +673,6 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         notifStatus = "❌ Off"
     }
 
-    // LOGIKA STATUS AUTO TRIAL
-    trialStatus := "❌ Off"
-    if config.AutoTrialTime != "" {
-        trialStatus = fmt.Sprintf("✅ `%s` WIB", config.AutoTrialTime)
-    }
-
-    // LOGIKA STATUS AUTO DELETE
-    deleteStatus := "❌ Manual"
-    if config.AutoDeleteTime != "" {
-        deleteStatus = fmt.Sprintf("✅ `%s` WIB", config.AutoDeleteTime)
-    }
-
     uptimeDuration := time.Since(startTime)
     uptimeStr := fmt.Sprintf("%d Jam %d Menit", int(uptimeDuration.Hours()), int(uptimeDuration.Minutes())%60)
     if uptimeDuration.Hours() > 24 {
@@ -835,12 +705,10 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         "• 👤 *Total Akun*: `%d`\n"+
         "• 🔔 *Notif*: %s\n\n"+
         "• ⏳ *Bot Status:*\n"+
-        "• 🕒 *Auto Trial*: %s\n"+
-        "• 🗑️ *Auto Delete*: %s\n"+
         "• 🕒 *Uptime*: %s\n"+
         "• ⚠️ *VPS Exp*: %s\n\n"+
         "• 🧑‍💻 *Hubungi @JesVpnt untuk bantuan*",
-        domain, ipInfo.City, ipInfo.Isp, totalUsers, notifStatus, trialStatus, deleteStatus, uptimeStr, vpsInfo)
+        domain, ipInfo.City, ipInfo.Isp, totalUsers, notifStatus, uptimeStr, vpsInfo)
 
     deleteLastMessage(bot, chatID)
 
@@ -925,14 +793,14 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
 
         var rows [][]tgbotapi.InlineKeyboardButton
         var navRow []tgbotapi.InlineKeyboardButton
-
+        
         if page > 1 {
             navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("⬅️ Prev", fmt.Sprintf("page_list:%d", page-1)))
         }
         if page < totalPages {
             navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("Next ➡️", fmt.Sprintf("page_list:%d", page+1)))
         }
-
+        
         if len(navRow) > 0 {
             rows = append(rows, navRow)
         }
@@ -1258,7 +1126,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
                 bot.Send(tgbotapi.NewMessage(adminID, "✅ Tidak ada akun kadaluwarsa. Tidak perlu restart service."))
             }
         }
-        return
+        return 
     }
 
     if deletedCount > 0 {
