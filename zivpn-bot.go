@@ -94,6 +94,7 @@ func main() {
     log.Printf("Authorized on account %s", bot.Self.UserName)
 
     // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS) ---
+    // Parameter terakhir 'false' berarti JANGAN restart service agar user aktif tidak putus
     go func() {
         autoDeleteExpiredUsers(bot, config.AdminID, false)
         ticker := time.NewTicker(AutoDeleteInterval)
@@ -256,6 +257,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         sendMessage(bot, query.Message.Chat.ID, "🔔 *SET NOTIFIKASI GRUP*\n\nSilakan masukkan ID Grup Telegram.\n\nContoh: `-1001234567890`")
 
     case callbackData == "menu_clean_restart":
+        // Panggil clean dengan restart service (TRUE)
         cleanAndRestartService(bot, query.Message.Chat.ID)
 
     case callbackData == "cancel":
@@ -481,6 +483,10 @@ func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("⚠️ Set VPS Exp", "menu_set_vps_date"),
             tgbotapi.NewInlineKeyboardButtonData("🔔 Set Grup", "menu_set_group"),
+        ),
+        // --- Maintenance ---
+        tgbotapi.NewInlineKeyboardRow(
+            tgbotapi.NewInlineKeyboardButtonData("🧹 Clean & Restart", "menu_clean_restart"),
         ),
         // --- Kembali ---
         tgbotapi.NewInlineKeyboardRow(
@@ -1057,6 +1063,7 @@ func cleanAndRestartService(bot *tgbotapi.BotAPI, chatID int64) {
     sendMessage(bot, chatID, "🧹 Membersihkan akun expired & Restart Service...")
 
     go func() {
+        // Panggil dengan 'true' untuk melakukan restart service
         autoDeleteExpiredUsers(bot, chatID, true)
     }()
 }
@@ -1066,6 +1073,9 @@ func restartVpnService() error {
     return cmd.Run()
 }
 
+// --- FUNGSI YANG SUDAH DIPERBAIKI ---
+// shouldRestart = false (background) -> Tidak restart agar user tidak putus.
+// shouldRestart = true (manual) -> Restart service untuk pembersihan total.
 func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart bool) {
     users, err := getUsers()
     if err != nil {
@@ -1085,6 +1095,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
             }
         }
 
+        // Hapus user hanya jika waktu sekarang sudah melewati expired time
         if time.Now().After(expiredTime) {
             res, err := apiCall("POST", "/user/delete", map[string]interface{}{
                 "password": u.Password,
@@ -1105,19 +1116,25 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
         }
     }
 
+    // Hanya restart jika ada user yang dihapus DAN perintahnya adalah manual restart
     if deletedCount > 0 {
-        log.Printf("🔄 [AutoDelete] %d user kadaluwarsa dihapus. Melakukan restart service %s...", deletedCount, ServiceName)
-
-        if err := restartVpnService(); err != nil {
-            log.Printf("❌ Gagal restart service: %v", err)
-            if bot != nil && shouldRestart {
-                bot.Send(tgbotapi.NewMessage(adminID, "❌ Gagal merestart service. Cek log server."))
+        if shouldRestart {
+            log.Printf("🔄 [AutoDelete] %d user dihapus. Melakukan restart service %s...", deletedCount, ServiceName)
+            if err := restartVpnService(); err != nil {
+                log.Printf("❌ Gagal restart service: %v", err)
+                if bot != nil {
+                    bot.Send(tgbotapi.NewMessage(adminID, "❌ Gagal merestart service. Cek log server."))
+                }
+            } else {
+                log.Printf("✅ Service %s berhasil di-restart.", ServiceName)
             }
         } else {
-            log.Printf("✅ Service %s berhasil di-restart.", ServiceName)
+            // Mode Background: Jangan restart service untuk menjaga koneksi user aktif
+            log.Printf("✅ [AutoDelete] %d user kadaluwarsa dihapus. Service TIDAK di-restart agar user lain tetap konek.", deletedCount)
         }
     }
 
+    // Notifikasi jika dipanggil secara manual (Clean & Restart)
     if shouldRestart {
         if bot != nil {
             if deletedCount > 0 {
@@ -1129,6 +1146,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
         return 
     }
 
+    // Notifikasi jika Auto Background
     if deletedCount > 0 {
         if bot != nil {
             userListStr := strings.Join(deletedUsers, ", ")
@@ -1137,7 +1155,9 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
             }
 
             msgText := fmt.Sprintf("🗑️ *AUTO DELETE EXPIRED*\n\n"+
-                "Bot telah menghapus `%d` akun expired dan merestart service.\n\nUser dihapus:\n- %s",
+                "Bot telah menghapus `%d` akun expired.\n"+
+                "🛡️ *User aktif tetap konek*\n\n"+
+                "✅ *User dihapus:*\n- %s",
                 deletedCount, userListStr)
 
             notification := tgbotapi.NewMessage(adminID, msgText)
