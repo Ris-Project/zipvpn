@@ -93,29 +93,13 @@ func main() {
     bot.Debug = false
     log.Printf("Authorized on account %s", bot.Self.UserName)
 
-    // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS & AUTO TRIAL) ---
-    // Logika: Delete Expired -> Tunggu 1 Menit -> Create Trial
+    // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS) ---
+    // Parameter terakhir 'false' berarti JANGAN restart service agar user aktif tidak putus
     go func() {
-        // Jalankan sekali saat start
         autoDeleteExpiredUsers(bot, config.AdminID, false)
-        time.Sleep(1 * time.Minute)
-        createAutoTrialUser(bot, config.AdminID, config)
-
-        // Loop setiap AutoDeleteInterval
         ticker := time.NewTicker(AutoDeleteInterval)
         for range ticker.C {
-            // 1. Hapus Expired
             autoDeleteExpiredUsers(bot, config.AdminID, false)
-
-            // 2. Tunggu 1 Menit sebelum create trial
-            time.Sleep(1 * time.Minute)
-
-            // 3. Create Auto Trial
-            // Reload config untuk memastikan settingan terbaru digunakan
-            currentCfg, err := loadConfig()
-            if err == nil {
-                createAutoTrialUser(bot, currentCfg.AdminID, currentCfg)
-            }
         }
     }()
 
@@ -140,20 +124,6 @@ func main() {
             handleCallback(bot, update.CallbackQuery, config.AdminID)
         }
     }
-}
-
-// --- FUNGSI AUTO TRIAL BARU ---
-func createAutoTrialUser(bot *tgbotapi.BotAPI, adminID int64, config BotConfig) {
-    log.Println("🎁 [AutoTrial] Memulai pembuatan akun trial otomatis...")
-    
-    randomPass := generateRandomPassword(4)
-    
-    // Hitung waktu expired 30 menit dari sekarang (dalam detik/Unix Timestamp)
-    expireTime := time.Now().Add(30 * time.Minute).Unix()
-    
-    // Panggil createUser dengan expireTime (parameter terakhir)
-    // days kita set 1 (dummy), karena sistem akan memprioritaskan expireTime
-    createUser(bot, adminID, randomPass, 1, 1, 1, config, expireTime)
 }
 
 // --- HANDLE MESSAGE ---
@@ -1271,7 +1241,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
 
             msgText := fmt.Sprintf("🗑️ *AUTO DELETE EXPIRED*\n\n"+
                 "Bot telah menghapus `%d` akun expired.\n"+
-                "🛡️ *User aktif tetap ada*\n\n"+
+                "🛡️ *User aktif tetap konek*\n\n"+
                 "✅ *User dihapus:*\n- %s",
                 deletedCount, userListStr)
 
