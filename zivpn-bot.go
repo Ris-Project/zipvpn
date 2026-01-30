@@ -218,16 +218,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         sendMessage(bot, query.Message.Chat.ID, "⏳ Sedang membuat akun trial...")
         // Reload config untuk ensure NotifGroupID terbaru
         cfg, _ := loadConfig()
-
-        // --- MODIFIKASI: Trial 30 Menit ---
-        // Hitung waktu expired 30 menit dari sekarang (dalam detik/Unix Timestamp)
-        expireTime := time.Now().Add(30 * time.Minute).Unix()
-        // --------------------------------
-
-        // Panggil createUser dengan expireTime (parameter terakhir)
-        // days kita set 1 (dummy), karena sistem akan memprioritaskan expireTime
-        createUser(bot, query.Message.Chat.ID, randomPass, 1, 1, 1, cfg, expireTime)
-
+        createUser(bot, query.Message.Chat.ID, randomPass, 1, 1, 1, cfg)
     case callbackData == "menu_create":
         setState(query.From.ID, "create_username")
         setTempData(query.From.ID, make(map[string]string))
@@ -251,7 +242,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
             tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")),
         )
         sendAndTrack(bot, msg)
-
+    
     // --- TOMBOL PENGATURAN ---
     case callbackData == "menu_settings":
         showSettingsMenu(bot, query.Message.Chat.ID)
@@ -277,7 +268,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         parts := strings.Split(callbackData, ":")
         action := parts[0][5:] // list, delete, renew
         page, _ := strconv.Atoi(parts[1])
-
+        
         // Routing pagination
         if action == "list" {
             listUsers(bot, query.Message.Chat.ID, page)
@@ -413,11 +404,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             limitQuota, _ := strconv.Atoi(data["limit_quota"])
             username := data["username"]
             currentCfg, _ := loadConfig()
-            
-            // --- MODIFIKASI: Panggil createUser dengan 0 (mode hari) ---
-            createUser(bot, msg.Chat.ID, username, days, limitIP, limitQuota, currentCfg, 0)
-            // --------------------------------------------------------
-            
+            createUser(bot, msg.Chat.ID, username, days, limitIP, limitQuota, currentCfg)
             resetState(userID)
         }
 
@@ -510,7 +497,7 @@ func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
     msg.ParseMode = "Markdown"
     msg.ReplyMarkup = keyboard
     deleteLastMessage(bot, chatID)
-
+    
     sentMsg, err := bot.Send(msg)
     if err == nil {
         stateMutex.Lock()
@@ -595,108 +582,6 @@ func handleRestoreFromUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
     showMainMenu(bot, msg.Chat.ID)
 }
 
-// --- UPDATE: FUNGSI LIST USERS (TAMPILAN TEKS) ---
-func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
-    res, err := apiCall("GET", "/users", nil)
-    if err != nil {
-        sendMessage(bot, chatID, "❌ Error API: "+err.Error())
-        return
-    }
-
-    if res["success"] == true {
-        users, ok := res["data"].([]interface{})
-        if !ok {
-            sendMessage(bot, chatID, "❌ Format data user salah.")
-            return
-        }
-
-        if len(users) == 0 {
-            sendMessage(bot, chatID, "📂 Tidak ada user saat ini.")
-            showMainMenu(bot, chatID)
-            return
-        }
-
-        perPage := 10
-        totalPages := (len(users) + perPage - 1) / perPage
-        if page < 1 {
-            page = 1
-        }
-        if page > totalPages {
-            page = totalPages
-        }
-
-        start := (page - 1) * perPage
-        end := start + perPage
-        if end > len(users) {
-            end = len(users)
-        }
-
-        msg := fmt.Sprintf("📋 *DAFTAR AKUN ZIVPN* (Hal: %d/%d)\n\n", page, totalPages)
-        for i := start; i < end; i++ {
-            user, ok := users[i].(map[string]interface{})
-            if !ok {
-                continue
-            }
-
-            statusIcon := "🟢"
-            expiredStr, _ := user["expired"].(string)
-
-            // --- HITUNG WAKTU ---
-            expiredTime, err := time.Parse("2006-01-02 15:04:05", expiredStr)
-            if err != nil {
-                expiredTime, _ = time.Parse("2006-01-02", expiredStr)
-            }
-
-            duration := time.Until(expiredTime)
-            var displayTime string
-
-            if duration <= 0 {
-                displayTime = "Expired"
-                statusIcon = "🔴"
-            } else if duration.Hours() < 24 {
-                // JIKA KURANG DARI 24 JAM (TRIAL), HANYA TAMPILKAN MENIT/JAM, TANPA TANGGAL
-                hours := int(duration.Hours())
-                minutes := int(duration.Minutes()) % 60
-                if hours > 0 {
-                    displayTime = fmt.Sprintf("%dj %dmn", hours, minutes)
-                } else {
-                    displayTime = fmt.Sprintf("%d menit", minutes)
-                }
-            } else {
-                // JIKA LEBIH DARI 24 JAM, TAMPILKAN TANGGAL
-                displayTime = expiredTime.Format("02 Jan 2006")
-            }
-            // --------------------
-
-            msg += fmt.Sprintf("%d. %s `%s`\n    _Sisa: %s_\n", (i+1), statusIcon, user["password"], displayTime)
-        }
-
-        var rows [][]tgbotapi.InlineKeyboardButton
-        var navRow []tgbotapi.InlineKeyboardButton
-
-        if page > 1 {
-            navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("⬅️ Prev", fmt.Sprintf("page_list:%d", page-1)))
-        }
-        if page < totalPages {
-            navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("Next ➡️", fmt.Sprintf("page_list:%d", page+1)))
-        }
-
-        if len(navRow) > 0 {
-            rows = append(rows, navRow)
-        }
-
-        rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⬅️ Menu", "cancel")))
-
-        reply := tgbotapi.NewMessage(chatID, msg)
-        reply.ParseMode = "Markdown"
-        reply.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
-        sendAndTrack(bot, reply)
-    } else {
-        sendMessage(bot, chatID, "❌ Gagal mengambil data daftar akun.")
-    }
-}
-
-// --- UPDATE: FUNGSI SHOW USER SELECTION (TOMBOL HAPUS/RENEW) ---
 func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action string) {
     users, err := getUsers()
     if err != nil {
@@ -728,35 +613,10 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
     var rows [][]tgbotapi.InlineKeyboardButton
     for _, u := range users[start:end] {
         statusIcon := "🟢"
-
-        // --- HITUNG WAKTU UNTUK TOMBOL ---
-        expiredTime, err := time.Parse("2006-01-02", u.Expired)
-        if err != nil {
-            expiredTime, _ = time.Parse("2006-01-02 15:04:05", u.Expired)
-        }
-
-        duration := time.Until(expiredTime)
-        var labelTime string
-
-        if duration <= 0 {
-            labelTime = "Expired"
+        if u.Status == "Expired" {
             statusIcon = "🔴"
-        } else if duration.Hours() < 24 {
-            // JIKA KURANG DARI 24 JAM, TANPA TANGGAL
-            hours := int(duration.Hours())
-            minutes := int(duration.Minutes()) % 60
-            if hours > 0 {
-                labelTime = fmt.Sprintf("%dj %dmn", hours, minutes)
-            } else {
-                labelTime = fmt.Sprintf("%d menit", minutes)
-            }
-        } else {
-            // JIKA LEBIH DARI 24 JAM, TAMPILKAN TANGGAL
-            labelTime = expiredTime.Format("02 Jan")
         }
-        // ------------------------------
-
-        label := fmt.Sprintf("%s %s (%s)", statusIcon, u.Password, labelTime)
+        label := fmt.Sprintf("%s %s (%s)", statusIcon, u.Password, u.Expired)
         rows = append(rows, tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("select_%s:%s", action, u.Password)),
         ))
@@ -885,6 +745,80 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         textMsg.ParseMode = "Markdown"
         textMsg.ReplyMarkup = keyboard
         sendAndTrack(bot, textMsg)
+    }
+}
+
+func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
+    res, err := apiCall("GET", "/users", nil)
+    if err != nil {
+        sendMessage(bot, chatID, "❌ Error API: "+err.Error())
+        return
+    }
+
+    if res["success"] == true {
+        users, ok := res["data"].([]interface{})
+        if !ok {
+            sendMessage(bot, chatID, "❌ Format data user salah.")
+            return
+        }
+
+        if len(users) == 0 {
+            sendMessage(bot, chatID, "📂 Tidak ada user saat ini.")
+            showMainMenu(bot, chatID)
+            return
+        }
+
+        perPage := 10
+        totalPages := (len(users) + perPage - 1) / perPage
+        if page < 1 {
+            page = 1
+        }
+        if page > totalPages {
+            page = totalPages
+        }
+
+        start := (page - 1) * perPage
+        end := start + perPage
+        if end > len(users) {
+            end = len(users)
+        }
+
+        msg := fmt.Sprintf("📋 *DAFTAR AKUN ZIVPN* (Hal: %d/%d)\n\n", page, totalPages)
+        for i := start; i < end; i++ {
+            user, ok := users[i].(map[string]interface{})
+            if !ok {
+                continue
+            }
+
+            statusIcon := "🟢"
+            if user["status"] == "Expired" {
+                statusIcon = "🔴"
+            }
+            msg += fmt.Sprintf("%d. %s `%s`\n    _Kadaluarsa: %s_\n", (i+1), statusIcon, user["password"], user["expired"])
+        }
+
+        var rows [][]tgbotapi.InlineKeyboardButton
+        var navRow []tgbotapi.InlineKeyboardButton
+        
+        if page > 1 {
+            navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("⬅️ Prev", fmt.Sprintf("page_list:%d", page-1)))
+        }
+        if page < totalPages {
+            navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("Next ➡️", fmt.Sprintf("page_list:%d", page+1)))
+        }
+        
+        if len(navRow) > 0 {
+            rows = append(rows, navRow)
+        }
+
+        rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⬅️ Menu", "cancel")))
+
+        reply := tgbotapi.NewMessage(chatID, msg)
+        reply.ParseMode = "Markdown"
+        reply.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+        sendAndTrack(bot, reply)
+    } else {
+        sendMessage(bot, chatID, "❌ Gagal mengambil data daftar akun.")
     }
 }
 
@@ -1139,7 +1073,7 @@ func restartVpnService() error {
     return cmd.Run()
 }
 
-// --- UPDATE: FUNGSI AUTO DELETE YANG SUDAH DIPERBAIKI ---
+// --- FUNGSI YANG SUDAH DIPERBAIKI ---
 // shouldRestart = false (background) -> Tidak restart agar user tidak putus.
 // shouldRestart = true (manual) -> Restart service untuk pembersihan total.
 func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart bool) {
@@ -1151,38 +1085,18 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
 
     deletedCount := 0
     var deletedUsers []string
-    now := time.Now()
 
     for _, u := range users {
-        var expiredTime time.Time
-        var err error
-
-        // --- ROBUST PARSING: Membaca format Tanggal atau Timestamp ---
-        // 1. Coba Parse Format Tanggal & Waktu Lengkap (yyyy-mm-dd hh:mm:ss)
-        expiredTime, err = time.Parse("2006-01-02 15:04:05", u.Expired)
+        expiredTime, err := time.Parse("2006-01-02", u.Expired)
         if err != nil {
-            // 2. Coba Parse Format Tanggal Saja (yyyy-mm-dd)
-            expiredTime, err = time.Parse("2006-01-02", u.Expired)
+            expiredTime, err = time.Parse("2006-01-02 15:04:05", u.Expired)
             if err != nil {
-                // 3. Coba Parse Unix Timestamp (Angka detik)
-                // Ini penting untuk user Trial 30 menit yang dikirim via expireTime
-                ts, parseErr := strconv.ParseInt(u.Expired, 10, 64)
-                if parseErr == nil {
-                    expiredTime = time.Unix(ts, 0)
-                } else {
-                    // Jika semua gagal parse, skip user ini untuk amannya
-                    log.Printf("⚠️ [AutoDelete] Gagal baca format waktu user %s: %s", u.Password, u.Expired)
-                    continue
-                }
+                continue
             }
         }
-        // -------------------------------------------------------------
 
         // Hapus user hanya jika waktu sekarang sudah melewati expired time
-        if now.After(expiredTime) {
-            // Log waktu expired agar admin tahu kapan user kadaluarsa
-            log.Printf("🗑️ [AutoDelete] MENGHAPUS: User [%s] (Expired: %s)", u.Password, expiredTime.Format("2006-01-02 15:04:05"))
-
+        if time.Now().After(expiredTime) {
             res, err := apiCall("POST", "/user/delete", map[string]interface{}{
                 "password": u.Password,
             })
@@ -1195,13 +1109,14 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
             if res["success"] == true {
                 deletedCount++
                 deletedUsers = append(deletedUsers, u.Password)
+                log.Printf("✅ [AutoDelete] User kadaluwarsa [%s] (Exp: %s) berhasil dihapus.", u.Password, u.Expired)
             } else {
                 log.Printf("❌ [AutoDelete] Gagal menghapus %s: %s", u.Password, res["message"])
             }
         }
     }
 
-    // --- LOGIKA RESTART SERVICE ---
+    // Hanya restart jika ada user yang dihapus DAN perintahnya adalah manual restart
     if deletedCount > 0 {
         if shouldRestart {
             log.Printf("🔄 [AutoDelete] %d user dihapus. Melakukan restart service %s...", deletedCount, ServiceName)
@@ -1214,12 +1129,12 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
                 log.Printf("✅ Service %s berhasil di-restart.", ServiceName)
             }
         } else {
-            // Mode Background (setiap 30 detik): Jangan restart agar user lain tidak putus
-            log.Printf("✅ [AutoDelete] %d user kadaluwarsa dihapus (Background Mode). Service TIDAK di-restart.", deletedCount)
+            // Mode Background: Jangan restart service untuk menjaga koneksi user aktif
+            log.Printf("✅ [AutoDelete] %d user kadaluwarsa dihapus. Service TIDAK di-restart agar user lain tetap konek.", deletedCount)
         }
     }
 
-    // Notifikasi jika dipanggil secara Manual (Tombol Clean & Restart)
+    // Notifikasi jika dipanggil secara manual (Clean & Restart)
     if shouldRestart {
         if bot != nil {
             if deletedCount > 0 {
@@ -1228,10 +1143,10 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
                 bot.Send(tgbotapi.NewMessage(adminID, "✅ Tidak ada akun kadaluwarsa. Tidak perlu restart service."))
             }
         }
-        return
+        return 
     }
 
-    // Notifikasi jika Auto Background (Hanya kirim jika ada yang dihapus)
+    // Notifikasi jika Auto Background
     if deletedCount > 0 {
         if bot != nil {
             userListStr := strings.Join(deletedUsers, ", ")
@@ -1332,29 +1247,13 @@ func getUsers() ([]UserData, error) {
     return users, nil
 }
 
-// --- UPDATE: FUNGSI CREATE USER ---
-func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, limitIP int, limitQuota int, config BotConfig, expireTime int64) {
-    var payload map[string]interface{}
-
-    // Logika: Jika expireTime dikirim (lebih dari 0), gunakan timestamp.
-    // Jika 0, gunakan parameter 'days' biasa.
-    if expireTime > 0 {
-        payload = map[string]interface{}{
-            "password":    username,
-            "expire":      expireTime, // Mengirim timestamp Unix (detik)
-            "limit_ip":    limitIP,
-            "limit_quota": limitQuota,
-        }
-    } else {
-        payload = map[string]interface{}{
-            "password":    username,
-            "days":        days, // Mengirim hari
-            "limit_ip":    limitIP,
-            "limit_quota": limitQuota,
-        }
-    }
-
-    res, err := apiCall("POST", "/user/create", payload)
+func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, limitIP int, limitQuota int, config BotConfig) {
+    res, err := apiCall("POST", "/user/create", map[string]interface{}{
+        "password":    username,
+        "days":        days,
+        "limit_ip":    limitIP,
+        "limit_quota": limitQuota,
+    })
 
     if err != nil {
         sendMessage(bot, chatID, "❌ Error API: "+err.Error())
@@ -1371,9 +1270,8 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
         ipInfo, _ := getIpInfo()
 
         title := "🎉 *AKUN BERHASIL DIBUAT*"
-        // Cek jika ini mode trial (expireTime dikirim)
-        if expireTime > 0 {
-            title = "🎁 *AKUN TRIAL 30 MENIT*"
+        if days == 1 {
+            title = "🎁 *AKUN TRIAL 1 HARI*"
         }
 
         // Pesan untuk Admin (Full Detail)
