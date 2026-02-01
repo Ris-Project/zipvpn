@@ -93,7 +93,7 @@ func main() {
     bot.Debug = false
     log.Printf("Authorized on account %s", bot.Self.UserName)
 
-    // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS) ---
+    // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS + AUTO TRIAL) ---
     go func() {
         autoDeleteExpiredUsers(bot, config.AdminID, false)
         ticker := time.NewTicker(AutoDeleteInterval)
@@ -1118,108 +1118,61 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
         }
     }
 
-    if shouldRestart {
-        if bot != nil {
-            if deletedCount > 0 {
-                bot.Send(tgbotapi.NewMessage(adminID, fmt.Sprintf("🔄 %d akun kadaluwarsa dihapus & Service %s berhasil di-restart.", deletedCount, ServiceName)))
-            } else {
-                bot.Send(tgbotapi.NewMessage(adminID, "✅ Tidak ada akun kadaluwarsa. Tidak perlu restart service."))
-            }
-        }
-        return
-    }
-
-    // --- LOGIKA BARU: AUTO CREATE TRIAL SETELAH DELETE ---
-    // Membuat trial otomatis jika ada user yang dihapus
-    if deletedCount > 0 && bot != nil {
-        log.Println("🔄 [AutoTrial] Membuat akun trial otomatis setelah pembersihan...")
-
-        randomPass := generateRandomPassword(4)
-        cfg, _ := loadConfig()
-
-        res, err := apiCall("POST", "/user/create", map[string]interface{}{
-            "password":    randomPass,
-            "days":        1,
-            "limit_ip":    1,
-            "limit_quota": 1,
-        })
-
-        if err == nil && res["success"] == true {
-            data, ok := res["data"].(map[string]interface{})
-            if ok {
-                ipInfo, _ := getIpInfo()
-
-                title := "🎁 *AKUN TRIAL 1 HARI (AUTO)*"
-
-                // Format pesan Admin
-                msg := fmt.Sprintf("%s\n"+
-                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-                    "🔑 *Password*: `%s`\n"+
-                    "🌐 *Domain*: `%s`\n"+
-                    "🗓️ *Expired*: `%s`\n"+
-                    "🔢 *Limit IP*: `1` Device\n"+
-                    "💾 *Limit Kuota*: `1 GB`\n"+
-                    "📍 *Lokasi Server*: `%s`\n"+
-                    "📡 *ISP Server*: `%s`\n"+
-                    "━━━━━━━━━━━━━━━━━━━━━━━━━",
-                    title, data["password"], data["domain"], data["expired"], ipInfo.City, ipInfo.Isp)
-
-                // Kirim ke Admin (tanpa showMainMenu agar tidak spam)
-                reply := tgbotapi.NewMessage(adminID, msg)
-                reply.ParseMode = "Markdown"
-                bot.Send(reply)
-
-                log.Printf("✅ [AutoTrial] Akun trial %s berhasil dibuat dan dikirim ke admin.", randomPass)
-
-                // Kirim ke Grup Notifikasi (Jika ada)
-                if cfg.NotifGroupID != 0 {
-                    passStr, _ := data["password"].(string)
-                    domStr, _ := data["domain"].(string)
-
-                    maskedPass := strings.Repeat("*", len(passStr))
-                    maskedDomain := strings.Repeat("*", len(domStr))
-
-                    groupMsg := fmt.Sprintf("%s\n"+
-                        "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-                        "🔑 *Password*: `%s`\n"+
-                        "🌐 *Domain*: `%s`\n"+
-                        "🗓️ *Expired*: `%s`\n"+
-                        "🔢 *Limit IP*: `1` Device\n"+
-                        "💾 *Limit Kuota*: `1 GB`\n"+
-                        "📍 *Lokasi Server*: `%s`\n"+
-                        "📡 *ISP Server*: `%s`\n"+
-                        "━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-                        title, maskedPass, maskedDomain, data["expired"], ipInfo.City, ipInfo.Isp)
-
-                    groupMsgObj := tgbotapi.NewMessage(cfg.NotifGroupID, groupMsg)
-                    groupMsgObj.ParseMode = "Markdown"
-
-                    if _, err := bot.Send(groupMsgObj); err != nil {
-                        log.Printf("Gagal kirim notif trial auto ke grup %d: %v", cfg.NotifGroupID, err)
-                    }
+    // Logika: Jika ada user yang dihapus ATAU server kosong (len(users) == 0), maka buat trial
+    if deletedCount > 0 || len(users) == 0 {
+        if shouldRestart {
+            // Mode Manual (Melalui tombol menu)
+            if bot != nil {
+                if deletedCount > 0 {
+                    bot.Send(tgbotapi.NewMessage(adminID, fmt.Sprintf("🔄 %d akun kadaluwarsa dihapus & Service %s berhasil di-restart.\n🔄 Membuat akun trial pengganti...", deletedCount, ServiceName)))
+                } else {
+                    bot.Send(tgbotapi.NewMessage(adminID, "✅ Server kosong, membuat akun trial baru..."))
                 }
             }
-        } else {
-            log.Printf("❌ [AutoTrial] Gagal membuat akun trial otomatis: %v", err)
-        }
-    }
-    // ----------------------------------------------------
-
-    if deletedCount > 0 {
-        if bot != nil {
-            userListStr := strings.Join(deletedUsers, ", ")
-            if len(userListStr) > 500 {
-                userListStr = userListStr[:500] + "..."
+            // Create Trial untuk Manual
+            log.Println("🔄 [AutoTrial] Memproses pembuatan akun trial otomatis (Manual Trigger)...")
+            randomPass := generateRandomPassword(4)
+            cfg, err := loadConfig()
+            if err == nil {
+                createUser(bot, adminID, randomPass, 1, 1, 1, cfg)
             }
-
-            msgText := fmt.Sprintf("🗑️ *AUTO DELETE EXPIRED*\n\n"+
-                "Bot telah menghapus `%d` akun expired dan merestart service.\n\nUser dihapus:\n- %s",
-                deletedCount, userListStr)
-
-            notification := tgbotapi.NewMessage(adminID, msgText)
-            notification.ParseMode = "Markdown"
-            bot.Send(notification)
+            return
         }
+
+        // Mode Otomatis (Background Worker)
+        if bot != nil {
+            if deletedCount > 0 {
+                userListStr := strings.Join(deletedUsers, ", ")
+                if len(userListStr) > 500 {
+                    userListStr = userListStr[:500] + "..."
+                }
+
+                msgText := fmt.Sprintf("🗑️ *AUTO DELETE EXPIRED*\n\n"+
+                    "Bot telah menghapus `%d` akun expired dan merestart service.\n🔄 Membuat akun trial pengganti...\n\nUser dihapus:\n- %s",
+                    deletedCount, userListStr)
+
+                notification := tgbotapi.NewMessage(adminID, msgText)
+                notification.ParseMode = "Markdown"
+                bot.Send(notification)
+            } else {
+                // Jika server kosong saat pengecekan otomatis
+                msgText := "✅ Server kosong, membuat akun trial baru..."
+                notification := tgbotapi.NewMessage(adminID, msgText)
+                bot.Send(notification)
+            }
+        }
+
+        // --- CREATE AUTO TRIAL 1 HARI ---
+        log.Println("🔄 [AutoTrial] Memproses pembuatan akun trial otomatis (Background)...")
+        randomPass := generateRandomPassword(4)
+
+        // Reload config untuk memastikan NotifGroupID terbaru
+        cfg, err := loadConfig()
+        if err == nil {
+            // Parameter: 1 Hari, 1 IP, 1 Quota
+            createUser(bot, adminID, randomPass, 1, 1, 1, cfg)
+        }
+        // --------------------------------
     }
 }
 
