@@ -589,7 +589,7 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
         return
     }
 
-    perPage := 10
+    perPage := 50
     totalPages := (len(users) + perPage - 1) / perPage
     if page < 1 {
         page = 1
@@ -762,7 +762,7 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
             return
         }
 
-        perPage := 10
+        perPage := 50
         totalPages := (len(users) + perPage - 1) / perPage
         if page < 1 {
             page = 1
@@ -1074,6 +1074,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
     }
 
     deletedCount := 0
+    hasExpired := false // Variabel flag untuk mendeteksi keberadaan user expired
     var deletedUsers []string
 
     for _, u := range users {
@@ -1086,6 +1087,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
         }
 
         if time.Now().After(expiredTime) {
+            hasExpired = true // SET FLAG KE TRUE JIKA ADA YANG EXPIRED
             res, err := apiCall("POST", "/user/delete", map[string]interface{}{
                 "password": u.Password,
             })
@@ -1118,10 +1120,10 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
         }
     }
 
-    // Logika: Jika ada user yang dihapus ATAU server kosong (len(users) == 0), maka buat trial
-    if deletedCount > 0 || len(users) == 0 {
+    // --- LOGIKA AUTO TRIAL (DISAMAKAN DENGAN MENU_TRIAL) ---
+    if hasExpired || len(users) == 0 {
         if shouldRestart {
-            // Mode Manual (Melalui tombol menu)
+            // Mode Manual
             if bot != nil {
                 if deletedCount > 0 {
                     bot.Send(tgbotapi.NewMessage(adminID, fmt.Sprintf("🔄 %d akun kadaluwarsa dihapus & Service %s berhasil di-restart.\n🔄 Membuat akun trial pengganti...", deletedCount, ServiceName)))
@@ -1129,9 +1131,10 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
                     bot.Send(tgbotapi.NewMessage(adminID, "✅ Server kosong, membuat akun trial baru..."))
                 }
             }
-            // Create Trial untuk Manual
-            log.Println("🔄 [AutoTrial] Memproses pembuatan akun trial otomatis (Manual Trigger)...")
+            
+            // LOGIKA CREATE TRIAL (SAMA PERSIS DENGAN MENU_TRIAL)
             randomPass := generateRandomPassword(4)
+            sendMessage(bot, adminID, "⏳ Sedang membuat akun trial...") // Pesan status seperti di menu_trial
             cfg, err := loadConfig()
             if err == nil {
                 createUser(bot, adminID, randomPass, 1, 1, 1, cfg)
@@ -1146,33 +1149,28 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
                 if len(userListStr) > 500 {
                     userListStr = userListStr[:500] + "..."
                 }
-
                 msgText := fmt.Sprintf("🗑️ *AUTO DELETE EXPIRED*\n\n"+
                     "Bot telah menghapus `%d` akun expired dan merestart service.\n🔄 Membuat akun trial pengganti...\n\nUser dihapus:\n- %s",
                     deletedCount, userListStr)
-
                 notification := tgbotapi.NewMessage(adminID, msgText)
                 notification.ParseMode = "Markdown"
                 bot.Send(notification)
             } else {
-                // Jika server kosong saat pengecekan otomatis
-                msgText := "✅ Server kosong, membuat akun trial baru..."
+                // Jika server kosong ATAU ada expired tapi tidak terhapus
+                msgText := "✅ Server kosong/menemukan expired, membuat akun trial baru..."
                 notification := tgbotapi.NewMessage(adminID, msgText)
                 bot.Send(notification)
             }
         }
 
-        // --- CREATE AUTO TRIAL 1 HARI ---
-        log.Println("🔄 [AutoTrial] Memproses pembuatan akun trial otomatis (Background)...")
+        // --- LOGIKA CREATE TRIAL (SAMA PERSIS DENGAN MENU_TRIAL) ---
         randomPass := generateRandomPassword(4)
-
-        // Reload config untuk memastikan NotifGroupID terbaru
+        sendMessage(bot, adminID, "⏳ Sedang membuat akun trial...") // Pesan status seperti di menu_trial
         cfg, err := loadConfig()
         if err == nil {
-            // Parameter: 1 Hari, 1 IP, 1 Quota
-            createUser(bot, adminID, randomPass, 1, 1, 1, cfg)
+            createUser(bot, adminID, randomPass, 1, 1, 1, cfg) // Parameter: 1 Hari, 1 IP, 1 Quota
         }
-        // --------------------------------
+        // ----------------------------------------------------------
     }
 }
 
