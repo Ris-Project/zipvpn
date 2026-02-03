@@ -88,19 +88,31 @@ func main() {
     // Load config awal
     config, err := loadConfig()
     if err != nil {
-        log.Fatal("Gagal memuat konfigurasi bot:", err)
+        log.Printf("WARNING: Gagal memuat konfigurasi bot (mungkin file belum ada atau rusak): %v", err)
+        // Jangan fatal exit, biarkan jalan dengan default kosong
+        config = BotConfig{}
     }
 
     bot, err := tgbotapi.NewBotAPI(config.BotToken)
     if err != nil {
-        log.Panic(err)
+        log.Panic("Gagal connect ke Telegram Bot API:", err)
     }
 
     bot.Debug = false
     log.Printf("Authorized on account %s", bot.Self.UserName)
 
+    // Cek koneksi ke Panel API sekali di awal
+    if _, err := apiCall("GET", "/info", nil); err != nil {
+        log.Printf("⚠️ WARNING: Tidak dapat terhubung ke Panel VPN API (%s). Pastikan Panel VPN berjalan!", ApiUrl)
+    }
+
     // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS) ---
     go func() {
+        defer func() {
+            if r := recover(); r != nil {
+                log.Printf("Panic recovered in AutoDelete: %v", r)
+            }
+        }()
         autoDeleteExpiredUsers(bot, config.AdminID, false)
         ticker := time.NewTicker(AutoDeleteInterval)
         for range ticker.C {
@@ -110,6 +122,11 @@ func main() {
 
     // --- BACKGROUND WORKER (AUTO BACKUP) ---
     go func() {
+        defer func() {
+            if r := recover(); r != nil {
+                log.Printf("Panic recovered in AutoBackup: %v", r)
+            }
+        }()
         performAutoBackup(bot, config.AdminID)
         ticker := time.NewTicker(AutoBackupInterval)
         for range ticker.C {
@@ -192,7 +209,7 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
             }
             sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Notifikasi Grup di set ke ID: `%d`", groupID))
 
-        // Legacy command untuk set tanggal VPS (sekarang lebih enak pakai tombol)
+        // Legacy command untuk set tanggal VPS
         case "setvpsdate":
             setState(msg.From.ID, "set_vps_date")
             sendMessage(bot, msg.Chat.ID, "📅 *SET VPS EXPIRED*\n\nSilakan masukkan tanggal expired VPS.\n\nFormat: `YYYY-MM-DD`\nContoh: `2024-12-31`")
@@ -224,7 +241,6 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     case callbackData == "menu_trial":
         randomPass := generateRandomPassword(4)
         sendMessage(bot, query.Message.Chat.ID, "⏳ Sedang membuat akun trial...")
-        // Reload config untuk ensure NotifGroupID terbaru
         cfg, _ := loadConfig()
         createUser(bot, query.Message.Chat.ID, randomPass, 1, 1, 1, cfg)
     case callbackData == "menu_create":
@@ -236,7 +252,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     case callbackData == "menu_renew":
         showUserSelection(bot, query.Message.Chat.ID, 1, "renew")
     case callbackData == "menu_list":
-        listUsers(bot, query.Message.Chat.ID, 1) // Halaman 1
+        listUsers(bot, query.Message.Chat.ID, 1)
     case callbackData == "menu_info":
         systemInfo(bot, query.Message.Chat.ID)
 
@@ -251,7 +267,6 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         )
         sendAndTrack(bot, msg)
 
-    // --- TOMBOL PENGATURAN ---
     case callbackData == "menu_settings":
         showSettingsMenu(bot, query.Message.Chat.ID)
 
@@ -263,7 +278,6 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         setState(query.From.ID, "set_group_id")
         sendMessage(bot, query.Message.Chat.ID, "🔔 *SET NOTIFIKASI GRUP*\n\nSilakan masukkan ID Grup Telegram.\n\nContoh: `-1001234567890`")
 
-    // --- BARU: SET JAM AUTO TRIAL ---
     case callbackData == "menu_set_trial_time":
         setState(query.From.ID, "set_auto_trial_time")
         cfg, _ := loadConfig()
@@ -272,21 +286,18 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
             currentTime = cfg.AutoTrialTime
         }
         sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("⏰ *SET JAM AUTO TRIAL*\n\nJam saat ini: `%s`\n\nSilakan masukkan jam (Format 24 Jam):\nContoh: `08:00` atau `20:30`\n\n*Kosongkan untuk reset ke default (07:02).*", currentTime))
-    // ------------------------------
 
     case callbackData == "menu_clean_restart":
         cleanAndRestartService(bot, query.Message.Chat.ID)
 
     case callbackData == "cancel":
         resetState(query.From.ID)
-        showMainMenu(bot, query.Message.Chat.ID) // Reload otomatis di dalam fungsi
+        showMainMenu(bot, query.Message.Chat.ID)
 
     case strings.HasPrefix(callbackData, "page_"):
         parts := strings.Split(callbackData, ":")
-        action := parts[0][5:] // list, delete, renew
+        action := parts[0][5:]
         page, _ := strconv.Atoi(parts[1])
-
-        // Routing pagination
         if action == "list" {
             listUsers(bot, query.Message.Chat.ID, page)
         } else {
@@ -325,30 +336,25 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
     text := strings.TrimSpace(msg.Text)
 
     switch state {
-    // --- STATE BARU: SET GROUP ID ---
     case "set_group_id":
         groupID, err := strconv.ParseInt(text, 10, 64)
         if err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ ID Grup harus berupa angka (Contoh: -1001234567890).")
             return
         }
-
         currentCfg, err := loadConfig()
         if err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
             return
         }
-
         currentCfg.NotifGroupID = groupID
         if err := saveConfig(currentCfg); err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
             return
         }
-
         resetState(userID)
         sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Notifikasi Grup berhasil diupdate ke ID: `%d`", groupID))
-        showMainMenu(bot, msg.Chat.ID) // Akan reload config otomatis
-    // --------------------------------
+        showMainMenu(bot, msg.Chat.ID)
 
     case "set_vps_date":
         _, err := time.Parse("2006-01-02", text)
@@ -356,34 +362,28 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             sendMessage(bot, msg.Chat.ID, "❌ Format tanggal salah.\nGunakan format `YYYY-MM-DD` (Contoh: 2024-12-31).")
             return
         }
-
         currentCfg, err := loadConfig()
         if err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
             return
         }
-
         currentCfg.VpsExpiredDate = text
         if err := saveConfig(currentCfg); err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
             return
         }
-
         resetState(userID)
         sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Tanggal Expired VPS berhasil diupdate ke: `%s`", text))
-        showMainMenu(bot, msg.Chat.ID) // Akan reload config otomatis
+        showMainMenu(bot, msg.Chat.ID)
 
-    // --- STATE BARU: SET AUTO TRIAL TIME ---
     case "set_auto_trial_time":
         currentCfg, err := loadConfig()
         if err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
             return
         }
-
-        // Jika user mengirim pesan kosong atau "-" reset ke default
         if text == "" || text == "-" {
-            currentCfg.AutoTrialTime = "" // Kosongkan agar sistem pakai default
+            currentCfg.AutoTrialTime = ""
             if err := saveConfig(currentCfg); err != nil {
                 sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
                 return
@@ -393,24 +393,19 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             showSettingsMenu(bot, msg.Chat.ID)
             return
         }
-
-        // Validasi format HH:MM
         _, err = time.Parse("15:04", text)
         if err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Format jam salah.\nGunakan format 24 Jam `HH:MM` (Contoh: 08:00 atau 15:30).")
             return
         }
-
         currentCfg.AutoTrialTime = text
         if err := saveConfig(currentCfg); err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
             return
         }
-
         resetState(userID)
-        sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Jam Auto Trial berhasil diupdate ke: `%s`\n\nBot akan otomatis membuat akun trial setiap hari pada jam tersebut.", text))
+        sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Jam Auto Trial berhasil diupdate ke: `%s`", text))
         showSettingsMenu(bot, msg.Chat.ID)
-    // ---------------------------------------
 
     case "create_username":
         stateMutex.Lock()
@@ -454,7 +449,6 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
         stateMutex.Lock()
         data, ok := tempUserData[userID]
         stateMutex.Unlock()
-
         if ok {
             limitIP, _ := strconv.Atoi(data["limit_ip"])
             limitQuota, _ := strconv.Atoi(data["limit_quota"])
@@ -510,7 +504,6 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 }
 
 // --- HELPER FUNCTIONS ---
-
 func getTempData(userID int64) (map[string]string, bool) {
     stateMutex.RLock()
     defer stateMutex.RUnlock()
@@ -520,6 +513,12 @@ func getTempData(userID int64) (map[string]string, bool) {
 
 // --- FUNGSI SCHEDULER AUTO TRIAL ---
 func startAutoTrialScheduler(bot *tgbotapi.BotAPI, adminID int64) {
+    defer func() {
+        if r := recover(); r != nil {
+            log.Printf("Panic recovered in AutoTrialScheduler: %v", r)
+        }
+    }()
+
     ticker := time.NewTicker(AutoTrialCheckInterval)
     defer ticker.Stop()
 
@@ -533,8 +532,6 @@ func startAutoTrialScheduler(bot *tgbotapi.BotAPI, adminID int64) {
         }
 
         targetTimeStr := cfg.AutoTrialTime
-        
-        // JIKA TIDAK DI-SET, OTOMATIS PAKAI 07:02
         if targetTimeStr == "" {
             targetTimeStr = "07:02"
         }
@@ -548,27 +545,18 @@ func startAutoTrialScheduler(bot *tgbotapi.BotAPI, adminID int64) {
         now := time.Now()
         nowTimeStr := now.Format("15:04")
 
-        // Cek apakah waktu sekarang sama dengan waktu yang diset
         if nowTimeStr == targetTimeStr {
-            
-            // Cek mutex agar tidak menjalankan 2x dalam 1 menit yang sama
             lastTrialMutex.Lock()
             if lastAutoTrialDate == now.Format("2006-01-02 15:04") {
                 lastTrialMutex.Unlock()
                 continue
             }
-            // Set flag agar tidak dieksekusi lagi di menit ini
             lastAutoTrialDate = now.Format("2006-01-02 15:04")
             lastTrialMutex.Unlock()
 
             log.Printf("🚀 [AutoTrial] Waktu matched! Membuat akun trial otomatis pada jam %s...", targetTimeStr)
-            
-            // Logic membuat akun trial
             randomPass := generateRandomPassword(4)
-            // Kirim notifikasi ke admin dulu
             sendMessage(bot, adminID, fmt.Sprintf("⏳ [AUTO TRIAL] Jam `%s`, sedang membuat akun trial...", targetTimeStr))
-            
-            // Eksekusi pembuatan user
             createUser(bot, adminID, randomPass, 1, 1, 1, cfg)
         }
     }
@@ -585,30 +573,24 @@ func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
     }
 
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
-        // --- Manajemen User ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
             tgbotapi.NewInlineKeyboardButtonData("🗑️ Delete Akun", "menu_delete"),
         ),
-        // --- Server & Info ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
         ),
-        // --- Backup & Restore ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("💾 Backup User", "menu_backup"),
             tgbotapi.NewInlineKeyboardButtonData("♻️ Restore User", "menu_restore"),
         ),
-        // --- Konfigurasi Bot/VPS ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("⚠️ Set VPS Exp", "menu_set_vps_date"),
             tgbotapi.NewInlineKeyboardButtonData("🔔 Set Grup", "menu_set_group"),
         ),
-        // --- Auto Trial ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("⏰ Set Jam Auto Trial", "menu_set_trial_time"),
         ),
-        // --- Kembali ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali ke Menu", "cancel"),
         ),
@@ -723,7 +705,7 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
         return
     }
 
-    perPage := 50 // UBAH DARI 10 JADI 50
+    perPage := 50
     totalPages := (len(users) + perPage - 1) / perPage
     if page < 1 {
         page = 1
@@ -774,10 +756,7 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
     sendAndTrack(bot, msg)
 }
 
-// showMainMenu dimodifikasi untuk selalu reload config dari file
-// dan HANYA memiliki 4 tombol.
 func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
-    // RELOAD CONFIG DARI FILE
     config, err := loadConfig()
     if err != nil {
         log.Printf("Error loading config in showMainMenu: %v", err)
@@ -853,7 +832,6 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 
     deleteLastMessage(bot, chatID)
 
-    // --- MENU UTAMA HANYA 4 TOMBOL ---
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("🎁 Trial Akun", "menu_trial"),
@@ -903,7 +881,7 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
             return
         }
 
-        perPage := 50 // UBAH DARI 10 JADI 50
+        perPage := 50
         totalPages := (len(users) + perPage - 1) / perPage
         if page < 1 {
             page = 1
@@ -918,7 +896,11 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
             end = len(users)
         }
 
+        // Batasi panjang pesan agar tidak error Telegram (Max 4096)
+        // Kita pakai batas aman 3800 karakter
         msg := fmt.Sprintf("📋 *DAFTAR AKUN ZIVPN* (Hal: %d/%d)\n\n", page, totalPages)
+        const maxMsgLen = 3800
+
         for i := start; i < end; i++ {
             user, ok := users[i].(map[string]interface{})
             if !ok {
@@ -929,7 +911,15 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
             if user["status"] == "Expired" {
                 statusIcon = "🔴"
             }
-            msg += fmt.Sprintf("%d. %s `%s`\n    _Kadaluarsa: %s_\n", (i+1), statusIcon, user["password"], user["expired"])
+            
+            line := fmt.Sprintf("%d. %s `%s`\n    _Kadaluarsa: %s_\n", (i+1), statusIcon, user["password"], user["expired"])
+            
+            // Jika menambahkan baris ini melebihi batas, stop
+            if len(msg)+len(line) > maxMsgLen {
+                msg += "\n... (List terlalu panjang)"
+                break
+            }
+            msg += line
         }
 
         var rows [][]tgbotapi.InlineKeyboardButton
@@ -1009,6 +999,9 @@ func sendAndTrack(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig) {
         stateMutex.Lock()
         lastMessageIDs[msg.ChatID] = sentMsg.MessageID
         stateMutex.Unlock()
+    } else {
+        // Log error sending but don't crash
+        log.Printf("Error sending message: %v", err)
     }
 }
 
@@ -1395,7 +1388,6 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
             title = "🎁 *AKUN TRIAL 1 HARI*"
         }
 
-        // Pesan untuk Admin (Full Detail)
         msg := fmt.Sprintf("%s\n"+
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
             "🔑 *Password*: `%s`\n"+
@@ -1414,19 +1406,15 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
             "━━━━━━━━━━━━━━━━━━━━━━━━━",
             title, data["password"], data["domain"], data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
-        // Kirim ke Admin
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
         deleteLastMessage(bot, chatID)
         bot.Send(reply)
 
-        // --- KIRIM KE GRUP NOTIFIKASI (DENGAN SENSOR) ---
         if config.NotifGroupID != 0 {
-            // Ambil password dan domain asli untuk disensor
             passStr, _ := data["password"].(string)
             domStr, _ := data["domain"].(string)
 
-            // Fungsi sensor: Ganti karakter dengan bintang
             maskedPass := strings.Repeat("*", len(passStr))
             maskedDomain := strings.Repeat("*", len(domStr))
 
@@ -1455,8 +1443,6 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
                 log.Printf("Gagal kirim notif sensor ke grup %d: %v", config.NotifGroupID, err)
             }
         }
-        // --------------------------------
-
         showMainMenu(bot, chatID)
     } else {
         errMsg, ok := res["message"].(string)
