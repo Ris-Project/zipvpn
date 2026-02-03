@@ -505,8 +505,13 @@ func getTempData(userID int64) (map[string]string, bool) {
     return data, ok
 }
 
-// --- FUNGSI AUTO TRIAL WORKER ---
+// --- FUNGSI AUTO TRIAL WORKER (PERBAIKAN) ---
 func startAutoTrialWorker(bot *tgbotapi.BotAPI, adminID int64) {
+    // Cek Admin ID dulu untuk keamanan
+    if adminID == 0 {
+        log.Println("[AutoTrial] PERINGATAN: AdminID belum diatur di config. Auto Trial tidak akan mengirim pesan ke mana-mana.")
+    }
+
     for {
         cfg, err := loadConfig()
         if err != nil {
@@ -527,20 +532,31 @@ func startAutoTrialWorker(bot *tgbotapi.BotAPI, adminID int64) {
         targetTime, err := time.Parse("15:04", targetTimeStr)
         if err != nil {
             log.Printf("[AutoTrial] Format waktu salah di config: %v", err)
-            time.Sleep(1 * time.Hour) // Tunggu lama jika error format
+            time.Sleep(1 * time.Hour)
             continue
         }
 
-        // Hitung next run time hari ini
+        // Hitung waktu target untuk HARI INI
         nextRun := time.Date(now.Year(), now.Month(), now.Day(), targetTime.Hour(), targetTime.Minute(), 0, 0, time.Local)
 
-        // Jika waktu lewat, jadwalkan besok
-        if now.After(nextRun) {
+        // --- LOGIKA GRACE PERIOD (PERBAIKAN) ---
+        // Beri toleransi 5 menit setelah waktu target.
+        // Misal target 07:02, jika bot bangun jam 07:05, masih dianggap jadwal hari ini.
+        graceWindowEnd := nextRun.Add(5 * time.Minute)
+
+        if now.After(graceWindowEnd) {
+            // Jika waktu sekarang sudah lewat batas toleransi (lebih dari 5 menit),
+            // berarti jadwal hari ini terlewat. Jadwalkan untuk BESOK.
+            log.Printf("[AutoTrial] Waktu target (%s) terlewat. Menjadwalkan untuk besok.", targetTimeStr)
             nextRun = nextRun.Add(24 * time.Hour)
+        } else {
+            // Jika belum lewat toleransi:
+            // 1. Jika sebelum target (misal 07:00), durasi positif -> Tunggu.
+            // 2. Jika dalam toleransi (misal 07:03), durasi negatif/nol -> Eksekusi segera.
         }
 
         duration := nextRun.Sub(now)
-        log.Printf("[AutoTrial] Scheduled next trial at %s (in %v)", nextRun.Format("2006-01-02 15:04:05"), duration)
+        log.Printf("[AutoTrial] Jadwal: %s. Waktu Sekarang: %s. Menunggu: %v", nextRun.Format("2006-01-02 15:04:05"), now.Format("15:04:05"), duration)
 
         // Tunggu sampai waktunya tiba
         time.Sleep(duration)
@@ -549,15 +565,15 @@ func startAutoTrialWorker(bot *tgbotapi.BotAPI, adminID int64) {
         cfg, _ = loadConfig()
         
         // Eksekusi Auto Trial
-        log.Println("[AutoTrial] Executing Auto Trial...")
+        log.Println("[AutoTrial] 🔔 Waktunya Auto Trial! Membuat akun...")
         randomPass := generateRandomPassword(4)
         createUser(bot, adminID, randomPass, 1, 1, 1, cfg)
         
-        // Tunggu sebentar agar tidak double trigger jika clock cepat
+        log.Println("[AutoTrial] Selesai. Tunggu 5 menit untuk reset loop.")
+        // Tunggu 5 menit agar tidak double trigger jika logic waktu overlap
         time.Sleep(5 * time.Minute)
     }
 }
-
 // --- FUNGSI SETTINGS MENU (MEMUAT SEMUA TOMBOL LAIN) ---
 func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
