@@ -504,15 +504,14 @@ func getTempData(userID int64) (map[string]string, bool) {
     data, ok := tempUserData[userID]
     return data, ok
 }
-
-// --- FUNGSI AUTO TRIAL WORKER (PERBAIKAN) ---
+// --- FUNGSI AUTO TRIAL WORKER (PERBAIKAN: POLLING) ---
 func startAutoTrialWorker(bot *tgbotapi.BotAPI, adminID int64) {
-    // Cek Admin ID dulu untuk keamanan
-    if adminID == 0 {
-        log.Println("[AutoTrial] PERINGATAN: AdminID belum diatur di config. Auto Trial tidak akan mengirim pesan ke mana-mana.")
-    }
+    // Variabel untuk menyimpan tanggal terakhir kali trial dijalankan
+    // Format: YYYY-MM-DD
+    var lastRunDate string
 
     for {
+        // 1. Load config terbaru setiap loop
         cfg, err := loadConfig()
         if err != nil {
             log.Printf("[AutoTrial] Error loading config: %v", err)
@@ -520,58 +519,51 @@ func startAutoTrialWorker(bot *tgbotapi.BotAPI, adminID int64) {
             continue
         }
 
-        // Default waktu 07:02 jika belum diset
+        // Gunakan AdminID dari config terbaru (jika admin update config file manual)
+        targetAdminID := adminID
+        if cfg.AdminID != 0 {
+            targetAdminID = cfg.AdminID
+        }
+
+        // Cek validasi Admin ID
+        if targetAdminID == 0 {
+            log.Println("[AutoTrial] PERINGATAN: AdminID belum diatur di config. Menunggu...")
+            time.Sleep(1 * time.Minute)
+            continue
+        }
+
+        // 2. Ambil target waktu (Default 07:02 jika kosong)
         targetTimeStr := cfg.AutoTrialTime
         if targetTimeStr == "" {
             targetTimeStr = "07:02"
         }
 
         now := time.Now()
-        
-        // Parse waktu target
-        targetTime, err := time.Parse("15:04", targetTimeStr)
-        if err != nil {
-            log.Printf("[AutoTrial] Format waktu salah di config: %v", err)
-            time.Sleep(1 * time.Hour)
-            continue
+        currentTimeStr := now.Format("15:04") // Format HH:MM
+        currentDateStr := now.Format("2006-01-02")
+
+        // 3. Logika Pengecekan Waktu
+        // Jika waktu sekarang SAMA dengan waktu target
+        // DAN tanggal terakhir running BUKAN hari ini (mencegah double trigger)
+        if currentTimeStr == targetTimeStr && lastRunDate != currentDateStr {
+            
+            log.Printf("[AutoTrial] 🔔 Waktunya Auto Trial! Waktu: %s, Tanggal: %s", currentTimeStr, currentDateStr)
+            
+            randomPass := generateRandomPassword(4)
+            
+            // Eksekusi pembuatan user
+            // Kita gunakan targetAdminID agar pesan terkirim ke admin yang benar
+            createUser(bot, targetAdminID, randomPass, 1, 1, 1, cfg)
+            
+            // Tandai bahwa sudah running hari ini
+            lastRunDate = currentDateStr
+            
+            log.Println("[AutoTrial] Selesai. Menunggu jadwal berikutnya.")
         }
 
-        // Hitung waktu target untuk HARI INI
-        nextRun := time.Date(now.Year(), now.Month(), now.Day(), targetTime.Hour(), targetTime.Minute(), 0, 0, time.Local)
-
-        // --- LOGIKA GRACE PERIOD (PERBAIKAN) ---
-        // Beri toleransi 5 menit setelah waktu target.
-        // Misal target 07:02, jika bot bangun jam 07:05, masih dianggap jadwal hari ini.
-        graceWindowEnd := nextRun.Add(5 * time.Minute)
-
-        if now.After(graceWindowEnd) {
-            // Jika waktu sekarang sudah lewat batas toleransi (lebih dari 5 menit),
-            // berarti jadwal hari ini terlewat. Jadwalkan untuk BESOK.
-            log.Printf("[AutoTrial] Waktu target (%s) terlewat. Menjadwalkan untuk besok.", targetTimeStr)
-            nextRun = nextRun.Add(24 * time.Hour)
-        } else {
-            // Jika belum lewat toleransi:
-            // 1. Jika sebelum target (misal 07:00), durasi positif -> Tunggu.
-            // 2. Jika dalam toleransi (misal 07:03), durasi negatif/nol -> Eksekusi segera.
-        }
-
-        duration := nextRun.Sub(now)
-        log.Printf("[AutoTrial] Jadwal: %s. Waktu Sekarang: %s. Menunggu: %v", nextRun.Format("2006-01-02 15:04:05"), now.Format("15:04:05"), duration)
-
-        // Tunggu sampai waktunya tiba
-        time.Sleep(duration)
-
-        // Reload config sebelum eksekusi (pastikan data terbaru)
-        cfg, _ = loadConfig()
-        
-        // Eksekusi Auto Trial
-        log.Println("[AutoTrial] 🔔 Waktunya Auto Trial! Membuat akun...")
-        randomPass := generateRandomPassword(4)
-        createUser(bot, adminID, randomPass, 1, 1, 1, cfg)
-        
-        log.Println("[AutoTrial] Selesai. Tunggu 5 menit untuk reset loop.")
-        // Tunggu 5 menit agar tidak double trigger jika logic waktu overlap
-        time.Sleep(5 * time.Minute)
+        // 4. Tidur sebentar (misal 30 detik) sebelum cek lagi.
+        // Ini membuat update config terbaca cepat (max delay 30 detik)
+        time.Sleep(30 * time.Second)
     }
 }
 // --- FUNGSI SETTINGS MENU (MEMUAT SEMUA TOMBOL LAIN) ---
