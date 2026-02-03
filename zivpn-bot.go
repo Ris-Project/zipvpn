@@ -1074,7 +1074,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
     }
 
     deletedCount := 0
-    hasExpired := false // Variabel flag untuk mendeteksi keberadaan user expired
+    hasExpired := false
     var deletedUsers []string
 
     for _, u := range users {
@@ -1087,7 +1087,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
         }
 
         if time.Now().After(expiredTime) {
-            hasExpired = true // SET FLAG KE TRUE JIKA ADA YANG EXPIRED
+            hasExpired = true
             res, err := apiCall("POST", "/user/delete", map[string]interface{}{
                 "password": u.Password,
             })
@@ -1117,10 +1117,16 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
             }
         } else {
             log.Printf("✅ Service %s berhasil di-restart.", ServiceName)
+            
+            // --- FIX: TAMBAHKAN DELAY DISINI ---
+            // Kita beri waktu 3 detik agar service VPN benar-benar siap menerima API request
+            log.Println("⏳ Menunggu service stabil (3 detik)...")
+            time.Sleep(3 * time.Second)
+            // -----------------------------------
         }
     }
 
-    // --- LOGIKA AUTO TRIAL (DISAMAKAN DENGAN MENU_TRIAL) ---
+    // --- LOGIKA AUTO TRIAL ---
     if hasExpired || len(users) == 0 {
         if shouldRestart {
             // Mode Manual
@@ -1132,9 +1138,9 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
                 }
             }
             
-            // LOGIKA CREATE TRIAL (SAMA PERSIS DENGAN MENU_TRIAL)
+            // LOGIKA CREATE TRIAL
             randomPass := generateRandomPassword(4)
-            sendMessage(bot, adminID, "⏳ Sedang membuat akun trial...") // Pesan status seperti di menu_trial
+            sendMessage(bot, adminID, "⏳ Sedang membuat akun trial...")
             cfg, err := loadConfig()
             if err == nil {
                 createUser(bot, adminID, randomPass, 1, 1, 1, cfg)
@@ -1156,21 +1162,19 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
                 notification.ParseMode = "Markdown"
                 bot.Send(notification)
             } else {
-                // Jika server kosong ATAU ada expired tapi tidak terhapus
                 msgText := "✅ Server kosong/menemukan expired, membuat akun trial baru..."
                 notification := tgbotapi.NewMessage(adminID, msgText)
                 bot.Send(notification)
             }
         }
 
-        // --- LOGIKA CREATE TRIAL (SAMA PERSIS DENGAN MENU_TRIAL) ---
+        // --- LOGIKA CREATE TRIAL ---
         randomPass := generateRandomPassword(4)
-        sendMessage(bot, adminID, "⏳ Sedang membuat akun trial...") // Pesan status seperti di menu_trial
+        sendMessage(bot, adminID, "⏳ Sedang membuat akun trial...")
         cfg, err := loadConfig()
         if err == nil {
-            createUser(bot, adminID, randomPass, 1, 1, 1, cfg) // Parameter: 1 Hari, 1 IP, 1 Quota
+            createUser(bot, adminID, randomPass, 1, 1, 1, cfg)
         }
-        // ----------------------------------------------------------
     }
 }
 
