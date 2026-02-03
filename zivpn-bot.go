@@ -535,7 +535,7 @@ func startAutoTrialWorker(bot *tgbotapi.BotAPI, adminID int64) {
         // 2. Ambil target waktu (Default 07:02 jika kosong)
         targetTimeStr := cfg.AutoTrialTime
         if targetTimeStr == "" {
-            targetTimeStr = "01:02"
+            targetTimeStr = "07:02"
         }
 
         now := time.Now()
