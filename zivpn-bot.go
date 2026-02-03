@@ -6,7 +6,7 @@ import (
     "fmt"
     "io"
     "log"
-    "math/rand"
+    "math/rand" // Hanya jika Go < 1.20, di Go 1.20+ global rand auto seeded
     "net/http"
     "os"
     "os/exec"
@@ -75,12 +75,17 @@ var (
 
 func main() {
     startTime = time.Now() // Set waktu mulai bot
-    rand.Seed(time.Now().UnixNano())
 
+    // Fix: rand.Seed tidak diperlukan lagi di Go 1.20+, tapi tetap aman untuk versi lama
+    // Jika menggunakan Go 1.20+, baris ini bisa dihapus atau dikomentari
+    // rand.Seed(time.Now().UnixNano()) 
+
+    // Pastikan direktori backup ada
     if err := os.MkdirAll(BackupDir, 0755); err != nil {
         log.Printf("Gagal membuat direktori backup: %v", err)
     }
 
+    // Load API Key
     if keyBytes, err := os.ReadFile(ApiKeyFile); err == nil {
         ApiKey = strings.TrimSpace(string(keyBytes))
     }
@@ -89,8 +94,11 @@ func main() {
     config, err := loadConfig()
     if err != nil {
         log.Printf("WARNING: Gagal memuat konfigurasi bot (mungkin file belum ada atau rusak): %v", err)
-        // Jangan fatal exit, biarkan jalan dengan default kosong
-        config = BotConfig{}
+        // Cegah crash jika token kosong saat pertama kali run tanpa config
+        if config.BotToken == "" {
+            log.Println("CRITICAL: BotToken kosong! Silakan edit file config atau isi manual.")
+            // Jangan return agar kita bisa cek error dengan jelas saat NewBotAPI
+        }
     }
 
     bot, err := tgbotapi.NewBotAPI(config.BotToken)
@@ -153,6 +161,7 @@ func main() {
 
 // --- HANDLE MESSAGE ---
 func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
+    // Cek Admin
     if msg.From.ID != adminID {
         reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Anda bukan admin.")
         sendAndTrack(bot, reply)
@@ -296,6 +305,11 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 
     case strings.HasPrefix(callbackData, "page_"):
         parts := strings.Split(callbackData, ":")
+        // Fix: Cek panjang parts untuk mencegah index out of range panic
+        if len(parts) < 2 {
+            bot.Request(tgbotapi.NewCallback(query.ID, "Error format data"))
+            return
+        }
         action := parts[0][5:]
         page, _ := strconv.Atoi(parts[1])
         if action == "list" {
@@ -911,9 +925,9 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
             if user["status"] == "Expired" {
                 statusIcon = "🔴"
             }
-            
+
             line := fmt.Sprintf("%d. %s `%s`\n    _Kadaluarsa: %s_\n", (i+1), statusIcon, user["password"], user["expired"])
-            
+
             // Jika menambahkan baris ini melebihi batas, stop
             if len(msg)+len(line) > maxMsgLen {
                 msg += "\n... (List terlalu panjang)"
