@@ -55,12 +55,10 @@ type IpInfo struct {
 }
 
 type UserData struct {
-    Host       string `json:"host"` // Host untuk backup
-    Password   string `json:"password"`
-    Expired    string `json:"expired"`
-    Status     string `json:"status"`
-    LimitIP    int    `json:"limit_ip"`    // Menambahkan field untuk deteksi trial
-    LimitQuota int    `json:"limit_quota"` // Menambahkan field untuk deteksi trial
+    Host     string `json:"host"` // Host untuk backup
+    Password string `json:"password"`
+    Expired  string `json:"expired"`
+    Status   string `json:"status"`
 }
 
 // Variabel global dengan Mutex untuk keamanan konkurensi (Thread-Safe)
@@ -250,7 +248,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
             tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")),
         )
         sendAndTrack(bot, msg)
-
+    
     // --- TOMBOL PENGATURAN ---
     case callbackData == "menu_settings":
         showSettingsMenu(bot, query.Message.Chat.ID)
@@ -278,22 +276,6 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
     case callbackData == "menu_clean_restart":
         cleanAndRestartService(bot, query.Message.Chat.ID)
 
-    // --- FITUR BARU: HAPUS SEMUA TRIAL ---
-    case callbackData == "menu_delete_all_trial":
-        msg := tgbotapi.NewMessage(query.Message.Chat.ID, "⚠️ *KONFIRMASI BAHAYA*\n\nAnda yakin ingin menghapus **SEMUA** akun Trial?\n\n*Definisi Trial:* 1 IP & 1 GB Kuota.\n\nTindakan ini tidak dapat dibatalkan.")
-        msg.ParseMode = "Markdown"
-        msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
-            tgbotapi.NewInlineKeyboardRow(
-                tgbotapi.NewInlineKeyboardButtonData("✅ Ya, Hapus Semua", "confirm_delete_all_trial"),
-                tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel"),
-            ),
-        )
-        sendAndTrack(bot, msg)
-
-    case callbackData == "confirm_delete_all_trial":
-        deleteAllTrialUsers(bot, query.Message.Chat.ID)
-    // -------------------------------------
-
     case callbackData == "cancel":
         resetState(query.From.ID)
         showMainMenu(bot, query.Message.Chat.ID) // Reload otomatis di dalam fungsi
@@ -302,7 +284,7 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
         parts := strings.Split(callbackData, ":")
         action := parts[0][5:] // list, delete, renew
         page, _ := strconv.Atoi(parts[1])
-
+        
         // Routing pagination
         if action == "list" {
             listUsers(bot, query.Message.Chat.ID, page)
@@ -342,7 +324,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
     text := strings.TrimSpace(msg.Text)
 
     switch state {
-
+    
     // --- STATE BARU: SET AUTO TRIAL TIME ---
     case "set_auto_trial_time":
         // Validasi format HH:MM
@@ -522,63 +504,6 @@ func getTempData(userID int64) (map[string]string, bool) {
     data, ok := tempUserData[userID]
     return data, ok
 }
-func deleteAllTrialUsers(bot *tgbotapi.BotAPI, chatID int64) {
-    sendMessage(bot, chatID, "⏳ Sedang mencari dan menghapus akun trial...")
-
-    users, err := getUsers()
-    if err != nil {
-        sendMessage(bot, chatID, "❌ Gagal mengambil data user.")
-        return
-    }
-
-    deletedCount := 0
-    failedCount := 0
-    var deletedUsers []string
-
-    for _, u := range users {
-        // Logika: Akun Trial dibuat dengan Limit IP 1 dan Limit Quota 1
-        // Asumsi: API mengembalikan limit_ip dan limit_quota
-        if u.LimitIP == 1 && u.LimitQuota == 1 {
-            res, err := apiCall("POST", "/user/delete", map[string]interface{}{
-                "password": u.Password,
-            })
-
-            if err != nil {
-                failedCount++
-                log.Printf("Gagal menghapus trial %s: %v", u.Password, err)
-                continue
-            }
-
-            if res["success"] == true {
-                deletedCount++
-                deletedUsers = append(deletedUsers, u.Password)
-            } else {
-                failedCount++
-            }
-        }
-    }
-
-    // Restart service jika ada yang dihapus
-    if deletedCount > 0 {
-        if err := restartVpnService(); err != nil {
-            log.Printf("Gagal restart service: %v", err)
-        }
-    }
-
-    msgText := fmt.Sprintf("🗑️ *HAPUS MASSAL TRIAL SELESAI*\n\n✅ Dihapus: %d\n❌ Gagal: %d", deletedCount, failedCount)
-    if deletedCount > 0 {
-        userList := strings.Join(deletedUsers, ", ")
-        if len(userList) > 400 {
-            userList = userList[:400] + "..."
-        }
-        msgText += fmt.Sprintf("\n\nList User:\n%s", userList)
-    } else {
-        msgText += "\n\nTidak ada akun trial (1 IP/1 GB) ditemukan."
-    }
-
-    sendMessage(bot, chatID, msgText)
-    showSettingsMenu(bot, chatID)
-}
 // --- FUNGSI AUTO TRIAL WORKER (PERBAIKAN: POLLING) ---
 func startAutoTrialWorker(bot *tgbotapi.BotAPI, adminID int64) {
     // Variabel untuk menyimpan tanggal terakhir kali trial dijalankan
@@ -621,18 +546,18 @@ func startAutoTrialWorker(bot *tgbotapi.BotAPI, adminID int64) {
         // Jika waktu sekarang SAMA dengan waktu target
         // DAN tanggal terakhir running BUKAN hari ini (mencegah double trigger)
         if currentTimeStr == targetTimeStr && lastRunDate != currentDateStr {
-
+            
             log.Printf("[AutoTrial] 🔔 Waktunya Auto Trial! Waktu: %s, Tanggal: %s", currentTimeStr, currentDateStr)
-
+            
             randomPass := generateRandomPassword(4)
-
+            
             // Eksekusi pembuatan user
             // Kita gunakan targetAdminID agar pesan terkirim ke admin yang benar
             createUser(bot, targetAdminID, randomPass, 1, 1, 1, cfg)
-
+            
             // Tandai bahwa sudah running hari ini
             lastRunDate = currentDateStr
-
+            
             log.Println("[AutoTrial] Selesai. Menunggu jadwal berikutnya.")
         }
 
@@ -641,7 +566,6 @@ func startAutoTrialWorker(bot *tgbotapi.BotAPI, adminID int64) {
         time.Sleep(30 * time.Second)
     }
 }
-
 // --- FUNGSI SETTINGS MENU (MEMUAT SEMUA TOMBOL LAIN) ---
 func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
@@ -668,11 +592,6 @@ func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("⏰ Set Auto Trial", "menu_set_auto_trial"),
         ),
-        // --- FITUR BARU: HAPUS SEMUA TRIAL ---
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("🗑️ Hapus Semua Trial", "menu_delete_all_trial"),
-        ),
-        // -------------------------------------
         // --- Kembali ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali ke Menu", "cancel"),
@@ -682,7 +601,7 @@ func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
     msg.ParseMode = "Markdown"
     msg.ReplyMarkup = keyboard
     deleteLastMessage(bot, chatID)
-
+    
     sentMsg, err := bot.Send(msg)
     if err == nil {
         stateMutex.Lock()
@@ -992,14 +911,14 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
 
         var rows [][]tgbotapi.InlineKeyboardButton
         var navRow []tgbotapi.InlineKeyboardButton
-
+        
         if page > 1 {
             navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("⬅️ Prev", fmt.Sprintf("page_list:%d", page-1)))
         }
         if page < totalPages {
             navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("Next ➡️", fmt.Sprintf("page_list:%d", page+1)))
         }
-
+        
         if len(navRow) > 0 {
             rows = append(rows, navRow)
         }
@@ -1325,7 +1244,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
                 bot.Send(tgbotapi.NewMessage(adminID, "✅ Tidak ada akun kadaluwarsa. Tidak perlu restart service."))
             }
         }
-        return
+        return 
     }
 
     if deletedCount > 0 {
