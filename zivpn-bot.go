@@ -1194,16 +1194,24 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
     deletedCount := 0
     var deletedUsers []string
 
+    // Dapatkan tanggal hari ini dalam format YYYY-MM-DD (Hanya Tanggal)
+    todayStr := time.Now().Format("2006-01-02")
+
     for _, u := range users {
-        expiredTime, err := time.Parse("2006-01-02", u.Expired)
-        if err != nil {
-            expiredTime, err = time.Parse("2006-01-02 15:04:05", u.Expired)
-            if err != nil {
-                continue
-            }
+        // Kita tidak perlu parsing jam lagi, kita ambil string tanggalnya saja
+        // Jika u.Expired formatnya "2023-12-31 15:04:05", kita potong jadi "2023-12-31"
+        expDateStr := u.Expired
+        if len(expDateStr) > 10 {
+            expDateStr = expDateStr[0:10]
         }
 
-        if time.Now().After(expiredTime) {
+        // LOGIKA BARU:
+        // Hapus HANYA JIKA tanggal sekarang sudah MELEBIHI tanggal expired.
+        // Contoh: Expired 2023-12-31.
+        // Jika hari ini 2023-12-31 -> Masih aktif (Karena "2023-12-31" tidak lebih besar dari "2023-12-31").
+        // Jika hari ini 2024-01-01 -> Dihapus (Karena "2024-01-01" lebih besar dari "2023-12-31").
+        
+        if todayStr > expDateStr {
             res, err := apiCall("POST", "/user/delete", map[string]interface{}{
                 "password": u.Password,
             })
