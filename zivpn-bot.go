@@ -1374,21 +1374,24 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
 
         // Pesan untuk Admin (Full Detail)
         msg := fmt.Sprintf("%s\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-            "🔑 *Password*: `%s`\n"+
-            "🌐 *Domain*: `%s`\n"+
-            "🗓️ *Expired*: `%s`\n"+
-            "🔢 *Limit IP*: `%d` Device\n"+
-            "💾 *Limit Kuota*: `%d GB`\n"+
-            "📍 *Lokasi Server*: `%s`\n"+
-            "📡 *ISP Server*: `%s`\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-            "⚡ *Koneksi Jaringan Bagus & Cepat*\n"+
-            "✅ *Nonton Youtube Stabil HD*\n"+
-            "✅ *Gaming Stabil & Anti Lag*\n"+
-            "✅ *Respon Cepat Tanpa Delay*\n"+
-            "✅ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "╭━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n"+
+            "      🚀 *UDP ZIVPN PREMIUM V 2026* 🚀\n"+
+            "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n"+
+            "┃ 🔑 *Password* : `%s`\n"+
+            "┃ 🌐 *Domain* : `%s`\n"+
+            "┃ 🗓️ *Expired* : `%s`\n"+
+            "┃ 🔢 *Limit IP* : `%d` Device\n"+
+            "┃ 💾 *Limit Kuota* : `%d GB`\n"+
+            "┃ 📍 *Lokasi Server* : `%s`\n"+
+            "┃ 📡 *ISP Server* : `%s`\n"+
+            "┣━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"+
+            "┃ ⚡ *PERFORMA PREMIUM*\n"+
+            "┣━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"+
+            "┃ ✅ Streaming YouTube HD Lancar\n"+
+            "┃ ✅ Gaming Stabil Anti Lag\n"+
+            "┃ ✅ Koneksi Cepat Tanpa Delay\n"+
+            "┃ ✅ Full Speed 24 Jam Nonstop\n"+
+            "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n",
             title, data["password"], data["domain"], data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
         // Kirim ke Admin
@@ -1408,21 +1411,24 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
             maskedDomain := strings.Repeat("*", len(domStr))
 
             groupMsg := fmt.Sprintf("%s\n"+
-                "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-                "🔑 *Password*: `%s`\n"+
-                "🌐 *Domain*: `%s`\n"+
-                "🗓️ *Expired*: `%s`\n"+
-                "🔢 *Limit IP*: `%d` Device\n"+
-                "💾 *Limit Kuota*: `%d GB`\n"+
-                "📍 *Lokasi Server*: `%s`\n"+
-                "📡 *ISP Server*: `%s`\n"+
-                "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-                "⚡ *Koneksi Jaringan Bagus & Cepat*\n"+
-                "✅ *Nonton Youtube Stabil HD*\n"+
-                "✅ *Gaming Stabil & Anti Lag*\n"+
-                "✅ *Respon Cepat Tanpa Delay*\n"+
-                "✅ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
-                "━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+                "╭━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n"+
+                "      🚀 *UDP ZIVPN PREMIUM V 2026* 🚀\n"+
+                "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n"+
+                "┃ 🔑 *Password* : `%s`\n"+
+                "┃ 🌐 *Domain* : `%s`\n"+
+                "┃ 🗓️ *Expired* : `%s`\n"+
+                "┃ 🔢 *Limit IP* : `%d` Device\n"+
+                "┃ 💾 *Limit Kuota* : `%d GB`\n"+
+                "┃ 📍 *Lokasi Server* : `%s`\n"+
+                "┃ 📡 *ISP Server* : `%s`\n"+
+                "┣━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"+
+                "┃ ⚡ *PERFORMA PREMIUM*\n"+
+                "┣━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"+
+                "┃ ✅ Streaming YouTube HD Lancar\n"+
+                "┃ ✅ Gaming Stabil Anti Lag\n"+
+                "┃ ✅ Koneksi Cepat Tanpa Delay\n"+
+                "┃ ✅ Full Speed 24 Jam Nonstop\n"+
+                "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n",
                 title, maskedPass, maskedDomain, data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
             groupMsgObj := tgbotapi.NewMessage(config.NotifGroupID, groupMsg)
@@ -1506,22 +1512,25 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, li
             }
         }
 
-        msg := fmt.Sprintf("✅ *BERHASIL DIPERPANJANG* (%d Hari)\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-            "🔑 *Password*: `%s`\n"+
-            "🌐 *Domain*: `%s`\n"+
-            "🗓️ *Expired Baru*: `%s`\n"+
-            "🔢 *Limit IP*: `%d` Device\n"+
-            "💾 *Limit Kuota*: `%d GB`\n"+
-            "📍 *Lokasi Server*: `%s`\n"+
-            "📡 *ISP Server*: `%s`\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"+
-            "⚡ *Koneksi Jaringan Bagus & Cepat*\n"+
-            "✅ *Nonton Youtube Stabil HD*\n"+
-            "✅ *Gaming Stabil & Anti Lag*\n"+
-            "✅ *Respon Cepat Tanpa Delay*\n"+
-            "✅ *Full Speed Anti Lemot Stabil 24 Jam*\n"+
-            "━━━━━━━━━━━━━━━━━━━━━━━━━",
+        msg := fmt.Sprintf(
+               "╭━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n"+
+               "      ✅ *BERHASIL DIPERPANJANG* (%d Hari)\n"+
+               "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n"+
+               "┃ 🔑 *Password* : `%s`\n"+
+               "┃ 🌐 *Domain* : `%s`\n"+
+               "┃ 🗓️ *Expired Baru* : `%s`\n"+
+               "┃ 🔢 *Limit IP* : `%d` Device\n"+
+               "┃ 💾 *Limit Kuota* : `%d GB`\n"+
+               "┃ 📍 *Lokasi Server* : `%s`\n"+
+               "┃ 📡 *ISP Server* : `%s`\n"+
+               "┣━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"+
+               "┃ ⚡ *PERFORMA PREMIUM*\n"+
+               "┣━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"+
+               "┃ ✅ Streaming YouTube HD Lancar\n"+
+               "┃ ✅ Gaming Stabil Anti Lag\n"+
+               "┃ ✅ Koneksi Cepat Tanpa Delay\n"+
+               "┃ ✅ Full Speed 24 Jam Nonstop\n"+
+               "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n",
             days, data["password"], domain, data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
         reply := tgbotapi.NewMessage(chatID, msg)
