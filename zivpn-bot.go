@@ -23,34 +23,30 @@ const (
     BotConfigFile = "/etc/zivpn/bot-config.json"
     ApiUrl        = "http://127.0.0.1:8080/api"
     ApiKeyFile    = "/etc/zivpn/apikey"
-    MenuPhotoURL  = "https://d.uguu.se/ReztLkhx.jpg" // Ganti dengan URL gambar Anda
+    // !!! GANTI INI DENGAN URL GAMBAR MENU ANDA !!!
+    MenuPhotoURL = "https://d.uguu.se/ReztLkhx.jpg"
 
+    // Interval untuk pengecekan dan penghapusan akun expired
     AutoDeleteInterval = 30 * time.Second
+    // Interval untuk Auto Backup (3 jam)
     AutoBackupInterval = 3 * time.Hour
 
+    // Konfigurasi Backup dan Service
     BackupDir   = "/etc/zivpn/backups"
     ServiceName = "zivpn"
-
-    // --- KONFIGURASI GRATIS ---
-    FreeUserFile = "/etc/zivpn/free-users.json" // File database user gratis
 )
 
 var ApiKey = "AutoFtBot-agskjgdvsbdreiWG1234512SDKrqw"
 
-var startTime time.Time
+var startTime time.Time // Global variable untuk menghitung uptime bot
 
 type BotConfig struct {
-    BotToken       string `json:"bot_token"`
-    AdminID        int64  `json:"admin_id"`
-    NotifGroupID   int64  `json:"notif_group_id"`
-    VpsExpiredDate string `json:"vps_expired_date"`
-    AutoTrialTime  string `json:"auto_trial_time"`
-
-    // --- FITUR BARU CONFIG ---
-    FreeBotEnabled   bool   `json:"free_bot_enabled"`   // Status bot gratis (on/off)
-    RequiredChannel  string `json:"required_channel"`   // Username channel (tanpa @)
-    FreeAccountDays  int    `json:"free_account_days"`  // Durasi akun gratis (default 3)
-    FreeCooldownDays int    `json:"free_cooldown_days"` // Cooldown dalam hari (default 2)
+    BotToken      string `json:"bot_token"`
+    AdminID       int64  `json:"admin_id"`
+    NotifGroupID  int64  `json:"notif_group_id"`
+    VpsExpiredDate string `json:"vps_expired_date"` // Format: 2006-01-02
+    // Fitur Baru: Konfigurasi waktu auto trial
+    AutoTrialTime string `json:"auto_trial_time"` // Format: 15:04 (Contoh: 07:02)
 }
 
 type IpInfo struct {
@@ -59,31 +55,22 @@ type IpInfo struct {
 }
 
 type UserData struct {
-    Host     string `json:"host"`
+    Host     string `json:"host"` // Host untuk backup
     Password string `json:"password"`
     Expired  string `json:"expired"`
     Status   string `json:"status"`
 }
 
-// Database User Gratis
-type FreeUserLog struct {
-    ID          int64     `json:"id"`
-    LastCreated time.Time `json:"last_created"`
-}
-
+// Variabel global dengan Mutex untuk keamanan konkurensi (Thread-Safe)
 var (
     stateMutex     sync.RWMutex
     userStates     = make(map[int64]string)
     tempUserData   = make(map[int64]map[string]string)
     lastMessageIDs = make(map[int64]int)
-
-    // Mutex untuk database user gratis
-    freeUserMutex sync.RWMutex
-    freeUsersDB   = make(map[int64]FreeUserLog)
 )
 
 func main() {
-    startTime = time.Now()
+    startTime = time.Now() // Set waktu mulai bot
     rand.Seed(time.Now().UnixNano())
 
     if err := os.MkdirAll(BackupDir, 0755); err != nil {
@@ -100,9 +87,6 @@ func main() {
         log.Fatal("Gagal memuat konfigurasi bot:", err)
     }
 
-    // Load DB User Gratis
-    loadFreeUserDB()
-
     bot, err := tgbotapi.NewBotAPI(config.BotToken)
     if err != nil {
         log.Panic(err)
@@ -111,7 +95,7 @@ func main() {
     bot.Debug = false
     log.Printf("Authorized on account %s", bot.Self.UserName)
 
-    // --- BACKGROUND WORKERS ---
+    // --- BACKGROUND WORKER (PENGHAPUSAN OTOMATIS) ---
     go func() {
         autoDeleteExpiredUsers(bot, config.AdminID, false)
         ticker := time.NewTicker(AutoDeleteInterval)
@@ -120,6 +104,7 @@ func main() {
         }
     }()
 
+    // --- BACKGROUND WORKER (AUTO BACKUP) ---
     go func() {
         performAutoBackup(bot, config.AdminID)
         ticker := time.NewTicker(AutoBackupInterval)
@@ -128,6 +113,7 @@ func main() {
         }
     }()
 
+    // --- BACKGROUND WORKER (AUTO TRIAL) ---
     go func() {
         startAutoTrialWorker(bot, config.AdminID)
     }()
@@ -146,110 +132,24 @@ func main() {
     }
 }
 
-// --- LOAD & SAVE FREE USER DB ---
-func loadFreeUserDB() {
-    freeUserMutex.Lock()
-    defer freeUserMutex.Unlock()
-
-    file, err := os.ReadFile(FreeUserFile)
-    if err != nil {
-        if os.IsNotExist(err) {
-            return // File belum ada, normal
-        }
-        log.Printf("Error reading free user DB: %v", err)
-        return
-    }
-
-    var logs []FreeUserLog
-    if err := json.Unmarshal(file, &logs); err != nil {
-        log.Printf("Error unmarshalling free user DB: %v", err)
-        return
-    }
-
-    for _, l := range logs {
-        freeUsersDB[l.ID] = l
-    }
-    log.Printf("Loaded %d free user logs.", len(freeUsersDB))
-}
-
-func saveFreeUserDB() {
-    freeUserMutex.RLock()
-    defer freeUserMutex.RUnlock()
-
-    var logs []FreeUserLog
-    for _, l := range freeUsersDB {
-        logs = append(logs, l)
-    }
-
-    data, err := json.MarshalIndent(logs, "", "  ")
-    if err != nil {
-        log.Printf("Error marshalling free user DB: %v", err)
-        return
-    }
-
-    if err := os.WriteFile(FreeUserFile, data, 0644); err != nil {
-        log.Printf("Error saving free user DB: %v", err)
-    }
-}
-
 // --- HANDLE MESSAGE ---
 func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
-    userID := msg.From.ID
-    chatID := msg.Chat.ID
-
-    // Load config untuk cek status bot gratis
-    cfg, _ := loadConfig()
-
-    // Jika bukan admin, cek apakah mode gratis aktif
-    if userID != adminID {
-        if !cfg.FreeBotEnabled {
-            // Jika mode gratis mati, tolak akses
-            reply := tgbotapi.NewMessage(chatID, "⛔ Akses Ditolak.\nBot ini sedang dalam mode Maintenance atau Private.")
-            bot.Send(reply)
-            return
-        }
-
-        // Jika mode gratis aktif, cek wajib join channel
-        if cfg.RequiredChannel != "" {
-            if !isUserMember(bot, userID, cfg.RequiredChannel) {
-                // Jika belum join
-                btn := tgbotapi.NewInlineKeyboardMarkup(
-                    tgbotapi.NewInlineKeyboardRow(
-                        tgbotapi.NewInlineKeyboardButtonURL("📢 Join Channel", "https://t.me/"+cfg.RequiredChannel),
-                    ),
-                    tgbotapi.NewInlineKeyboardRow(
-                        tgbotapi.NewInlineKeyboardButtonData("✅ Cek Keanggotaan", "check_member"),
-                    ),
-                )
-                reply := tgbotapi.NewMessage(chatID, fmt.Sprintf("🚫 *AKSES DITOLAK*\n\nAnda harus bergabung ke Channel kami untuk menggunakan bot ini.\n\nChannel: @%s", cfg.RequiredChannel))
-                reply.ParseMode = "Markdown"
-                reply.ReplyMarkup = btn
-                bot.Send(reply)
-                return
-            }
-        }
-
-        // --- LOGIKA USER GRATIS ---
-        text := strings.ToLower(msg.Text)
-        if text == "/start" || text == "menu" {
-            showFreeUserMenu(bot, chatID, userID)
-        } else {
-            reply := tgbotapi.NewMessage(chatID, "⚠️ Perintah tidak dikenal. Ketik /start.")
-            bot.Send(reply)
-        }
+    if msg.From.ID != adminID {
+        reply := tgbotapi.NewMessage(msg.Chat.ID, "⛔ Akses Ditolak. Anda bukan admin.")
+        sendAndTrack(bot, reply)
         return
     }
 
-    // --- LOGIKA ADMIN (DI BAWAH INI) ---
     stateMutex.RLock()
-    state, exists := userStates[userID]
+    state, exists := userStates[msg.From.ID]
     stateMutex.RUnlock()
 
+    // Handle Restore dari Upload File
     if exists && state == "wait_restore_file" {
         if msg.Document != nil {
             handleRestoreFromUpload(bot, msg)
         } else {
-            sendMessage(bot, chatID, "❌ Mohon kirimkan file backup (.json).")
+            sendMessage(bot, msg.Chat.ID, "❌ Mohon kirimkan file backup (.json).")
         }
         return
     }
@@ -264,240 +164,143 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
     if msg.IsCommand() {
         switch msg.Command() {
         case "start", "panel", "menu":
-            showMainMenu(bot, chatID)
+            showMainMenu(bot, msg.Chat.ID)
         case "setgroup":
             args := msg.CommandArguments()
             if args == "" {
-                sendMessage(bot, chatID, "❌ Format salah.\n\nUsage: `/setgroup <ID_GRUP>`\n\nContoh: `/setgroup -1001234567890`")
+                sendMessage(bot, msg.Chat.ID, "❌ Format salah.\n\nUsage: `/setgroup <ID_GRUP>`\n\nContoh: `/setgroup -1001234567890`")
                 return
             }
             groupID, err := strconv.ParseInt(args, 10, 64)
             if err != nil {
-                sendMessage(bot, chatID, "❌ ID Grup harus berupa angka.")
+                sendMessage(bot, msg.Chat.ID, "❌ ID Grup harus berupa angka.")
                 return
             }
 
             currentCfg, err := loadConfig()
             if err != nil {
-                sendMessage(bot, chatID, "❌ Gagal membaca konfigurasi.")
+                sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
                 return
             }
 
             currentCfg.NotifGroupID = groupID
             if err := saveConfig(currentCfg); err != nil {
-                sendMessage(bot, chatID, "❌ Gagal menyimpan konfigurasi.")
+                sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
                 return
             }
-            sendMessage(bot, chatID, fmt.Sprintf("✅ Notifikasi Grup di set ke ID: `%d`", groupID))
+            sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Notifikasi Grup di set ke ID: `%d`", groupID))
 
+        // Legacy command untuk set tanggal VPS (sekarang lebih enak pakai tombol)
         case "setvpsdate":
-            setState(userID, "set_vps_date")
-            sendMessage(bot, chatID, "📅 *SET VPS EXPIRED*\n\nSilakan masukkan tanggal expired VPS.\n\nFormat: `YYYY-MM-DD`\nContoh: `2024-12-31`")
+            setState(msg.From.ID, "set_vps_date")
+            sendMessage(bot, msg.Chat.ID, "📅 *SET VPS EXPIRED*\n\nSilakan masukkan tanggal expired VPS.\n\nFormat: `YYYY-MM-DD`\nContoh: `2024-12-31`")
 
         default:
-            reply := tgbotapi.NewMessage(chatID, "Perintah tidak dikenal. Ketik /panel.")
+            reply := tgbotapi.NewMessage(msg.Chat.ID, "Perintah tidak dikenal. Ketik /panel.")
             sendAndTrack(bot, reply)
         }
     } else {
         if text == "panel" || text == "menu" || text == "pull panel" {
-            showMainMenu(bot, chatID)
+            showMainMenu(bot, msg.Chat.ID)
         } else {
-            reply := tgbotapi.NewMessage(chatID, "⚠️ Sistem Siaga.\nKetik /panel.")
+            reply := tgbotapi.NewMessage(msg.Chat.ID, "⚠️ Sistem Siaga.\nKetik /panel.")
             sendAndTrack(bot, reply)
         }
     }
 }
 
-// --- FUNGSI CEK MEMBERSHIP CHANNEL ---
-func isUserMember(bot *tgbotapi.BotAPI, userID int64, channel string) bool {
-    chatConfig := tgbotapi.ChatConfig{ChatID: "@" + channel}
-    member, err := bot.GetChatMember(tgbotapi.GetChatMemberConfig{
-        ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
-            ChatConfig: chatConfig,
-            UserID:     userID,
-        },
-    })
-    if err != nil {
-        log.Printf("Error checking membership: %v", err)
-        return false
-    }
-
-    // Status boleh: Creator, Administrator, Member
-    // Status dilarang: Left, Kicked
-    return member.Status == "creator" || member.Status == "administrator" || member.Status == "member"
-}
-
-// --- MENU USER GRATIS ---
-func showFreeUserMenu(bot *tgbotapi.BotAPI, chatID int64, userID int64) {
-    cfg, _ := loadConfig()
-    
-    var msgText string
-    keyboard := tgbotapi.NewInlineKeyboardMarkup()
-
-    // Cek apakah user bisa membuat akun
-    freeUserMutex.RLock()
-    userLog, exists := freeUsersDB[userID]
-    freeUserMutex.RUnlock()
-
-    canCreate := true
-    remainingTime := ""
-
-    // Set default cooldown dari config, jika 0 maka 2 hari
-    cooldownDays := cfg.FreeCooldownDays
-    if cooldownDays == 0 {
-        cooldownDays = 2
-    }
-    cooldownDuration := time.Duration(cooldownDays) * 24 * time.Hour
-
-    if exists {
-        elapsed := time.Since(userLog.LastCreated)
-        if elapsed < cooldownDuration {
-            canCreate = false
-            left := cooldownDuration - elapsed
-            remainingTime = fmt.Sprintf("Tunggu %d jam lagi.", int(left.Hours()))
-        } else {
-            // Sudah lewat cooldown, reset (hapus log lama atau biarkan logic create yang update)
-            canCreate = true
-        }
-    }
-
-    if canCreate {
-        msgText = "🆓 *GRATIS VPN BOT*\n\nAnda berhak membuat akun gratis.\n\n*Syarat & Ketentuan:*\n- Durasi: 3 Hari\n- Password Random\n- Limit IP & Kuota Default\n- Hanya bisa membuat 1x setiap 2 hari."
-        keyboard = tgbotapi.NewInlineKeyboardMarkup(
-            tgbotapi.NewInlineKeyboardRow(
-                tgbotapi.NewInlineKeyboardButtonData("🎁 Buat Akun Gratis", "free_create"),
-            ),
-        )
-    } else {
-        msgText = fmt.Sprintf("⚠️ *Batas Waktu*\n\nAnda sudah membuat akun gratis sebelumnya.\n%s", remainingTime)
-        keyboard = tgbotapi.NewInlineKeyboardMarkup(
-            tgbotapi.NewInlineKeyboardRow(
-                tgbotapi.NewInlineKeyboardButtonData("🔄 Coba Lagi", "free_retry"),
-            ),
-        )
-    }
-
-    msg := tgbotapi.NewMessage(chatID, msgText)
-    msg.ParseMode = "Markdown"
-    msg.ReplyMarkup = keyboard
-    bot.Send(msg)
-}
-
 // --- HANDLE CALLBACK ---
 func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID int64) {
-    userID := query.From.ID
-    chatID := query.Message.Chat.ID
-
-    // Handle Callback untuk User Gratis (Non-Admin)
-    if userID != adminID {
-        cfg, _ := loadConfig()
-        data := query.Data
-
-        // Cek membership ulang saat klik tombol
-        if cfg.RequiredChannel != "" && !isUserMember(bot, userID, cfg.RequiredChannel) {
-            bot.Request(tgbotapi.NewCallback(query.ID, "Anda belum join channel!"))
-            return
-        }
-
-        if data == "free_create" || data == "free_retry" {
-            handleFreeCreation(bot, chatID, userID, cfg)
-        } else if data == "check_member" {
-            bot.Request(tgbotapi.NewCallback(query.ID, "Memeriksa..."))
-            showFreeUserMenu(bot, chatID, userID)
-        }
+    if query.From.ID != adminID {
+        bot.Request(tgbotapi.NewCallback(query.ID, "Akses Ditolak"))
         return
     }
 
-    // --- LOGIKA CALLBACK ADMIN ---
     callbackData := query.Data
 
     switch {
     case callbackData == "menu_trial":
         randomPass := generateRandomPassword(4)
-        sendMessage(bot, chatID, "⏳ Sedang membuat akun trial...")
+        sendMessage(bot, query.Message.Chat.ID, "⏳ Sedang membuat akun trial...")
+        // Reload config untuk ensure NotifGroupID terbaru
         cfg, _ := loadConfig()
-        createUser(bot, chatID, randomPass, 1, 1, 1, cfg, true) // Admin trial 1 hari
-
+        createUser(bot, query.Message.Chat.ID, randomPass, 1, 1, 1, cfg)
     case callbackData == "menu_create":
-        setState(userID, "create_username")
-        setTempData(userID, make(map[string]string))
-        sendMessage(bot, chatID, "🔑 *MENU CREATE*\nSilakan masukkan **PASSWORD**:")
-
+        setState(query.From.ID, "create_username")
+        setTempData(query.From.ID, make(map[string]string))
+        sendMessage(bot, query.Message.Chat.ID, "🔑 *MENU CREATE*\nSilakan masukkan **PASSWORD**:")
     case callbackData == "menu_delete":
-        showUserSelection(bot, chatID, 1, "delete")
+        showUserSelection(bot, query.Message.Chat.ID, 1, "delete")
     case callbackData == "menu_renew":
-        showUserSelection(bot, chatID, 1, "renew")
+        showUserSelection(bot, query.Message.Chat.ID, 1, "renew")
     case callbackData == "menu_list":
-        listUsers(bot, chatID, 1)
+        listUsers(bot, query.Message.Chat.ID, 1) // Halaman 1
     case callbackData == "menu_info":
-        systemInfo(bot, chatID)
+        systemInfo(bot, query.Message.Chat.ID)
 
     case callbackData == "menu_backup":
-        performManualBackup(bot, chatID)
+        performManualBackup(bot, query.Message.Chat.ID)
     case callbackData == "menu_restore":
-        setState(userID, "wait_restore_file")
-        msg := tgbotapi.NewMessage(chatID, "📥 *RESTORE DATA*\nSilakan kirimkan file backup `.json`.")
+        setState(query.From.ID, "wait_restore_file")
+        msg := tgbotapi.NewMessage(query.Message.Chat.ID, "📥 *RESTORE DATA*\nSilakan kirimkan file backup `.json`.")
         msg.ParseMode = "Markdown"
         msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
             tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")),
         )
         sendAndTrack(bot, msg)
-
+    
+    // --- TOMBOL PENGATURAN ---
     case callbackData == "menu_settings":
-        showSettingsMenu(bot, chatID)
+        showSettingsMenu(bot, query.Message.Chat.ID)
+    // -------------------------
 
-    // --- PENGATURAN BARU ---
     case callbackData == "menu_set_vps_date":
-        setState(userID, "set_vps_date")
-        sendMessage(bot, chatID, "📅 *SET VPS EXPIRED*\n\nSilakan masukkan tanggal expired VPS.\n\nFormat: `YYYY-MM-DD`\nContoh: `2024-12-31`")
+        setState(query.From.ID, "set_vps_date")
+        sendMessage(bot, query.Message.Chat.ID, "📅 *SET VPS EXPIRED*\n\nSilakan masukkan tanggal expired VPS.\n\nFormat: `YYYY-MM-DD`\nContoh: `2024-12-31`")
 
     case callbackData == "menu_set_group":
-        setState(userID, "set_group_id")
-        sendMessage(bot, chatID, "🔔 *SET NOTIFIKASI GRUP*\n\nSilakan masukkan ID Grup Telegram.\n\nContoh: `-1001234567890`")
+        setState(query.From.ID, "set_group_id")
+        sendMessage(bot, query.Message.Chat.ID, "🔔 *SET NOTIFIKASI GRUP*\n\nSilakan masukkan ID Grup Telegram.\n\nContoh: `-1001234567890`")
 
-    case callbackData == "menu_set_channel":
-        setState(userID, "set_channel")
-        sendMessage(bot, chatID, "📢 *SET CHANNEL WAJIB*\n\nMasukkan Username Channel (tanpa @).\nContoh: `channel_saya`")
-
-    case callbackData == "menu_toggle_free":
-        toggleFreeBot(bot, chatID)
-
+    // --- FITUR BARU: SET AUTO TRIAL TIME ---
     case callbackData == "menu_set_auto_trial":
-        setState(userID, "set_auto_trial_time")
+        setState(query.From.ID, "set_auto_trial_time")
         cfg, _ := loadConfig()
-        current := "07:02"
+        current := "07:02" // Default
         if cfg.AutoTrialTime != "" {
             current = cfg.AutoTrialTime
         }
-        sendMessage(bot, chatID, fmt.Sprintf("⏰ *SET JAM AUTO TRIAL*\n\nSilakan masukkan jam (Format 24 Jam).\nFormat: `HH:MM`\nContoh: `07:02`\n\nSaat ini: `%s`", current))
+        sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("⏰ *SET JAM AUTO TRIAL*\n\nSilakan masukkan jam (Format 24 Jam).\nFormat: `HH:MM`\nContoh: `07:02`\n\nSaat ini: `%s`", current))
+    // ---------------------------------------
 
     case callbackData == "menu_clean_restart":
-        cleanAndRestartService(bot, chatID)
+        cleanAndRestartService(bot, query.Message.Chat.ID)
 
     case callbackData == "cancel":
-        resetState(userID)
-        showMainMenu(bot, chatID)
+        resetState(query.From.ID)
+        showMainMenu(bot, query.Message.Chat.ID) // Reload otomatis di dalam fungsi
 
     case strings.HasPrefix(callbackData, "page_"):
         parts := strings.Split(callbackData, ":")
-        action := parts[0][5:]
+        action := parts[0][5:] // list, delete, renew
         page, _ := strconv.Atoi(parts[1])
-
+        
+        // Routing pagination
         if action == "list" {
-            listUsers(bot, chatID, page)
+            listUsers(bot, query.Message.Chat.ID, page)
         } else {
-            showUserSelection(bot, chatID, page, action)
+            showUserSelection(bot, query.Message.Chat.ID, page, action)
         }
 
     case strings.HasPrefix(callbackData, "select_renew:"):
         username := strings.TrimPrefix(callbackData, "select_renew:")
-        setTempData(userID, map[string]string{"username": username})
-        setState(userID, "renew_limit_ip")
-        sendMessage(bot, chatID, fmt.Sprintf("🔄 *MENU RENEW*\nUser: `%s`\n\nMasukkan **Limit IP**:", username))
+        setTempData(query.From.ID, map[string]string{"username": username})
+        setState(query.From.ID, "renew_limit_ip")
+        sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("🔄 *MENU RENEW*\nUser: `%s`\n\nMasukkan **Limit IP**:", username))
 
     case strings.HasPrefix(callbackData, "select_delete:"):
         username := strings.TrimPrefix(callbackData, "select_delete:")
-        msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("❓ *KONFIRMASI HAPUS*\nAnda yakin ingin menghapus user `%s`?", username))
+        msg := tgbotapi.NewMessage(query.Message.Chat.ID, fmt.Sprintf("❓ *KONFIRMASI HAPUS*\nAnda yakin ingin menghapus user `%s`?", username))
         msg.ParseMode = "Markdown"
         msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
             tgbotapi.NewInlineKeyboardRow(
@@ -509,178 +312,69 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 
     case strings.HasPrefix(callbackData, "confirm_delete:"):
         username := strings.TrimPrefix(callbackData, "confirm_delete:")
-        deleteUser(bot, chatID, username)
+        deleteUser(bot, query.Message.Chat.ID, username)
     }
 
     bot.Request(tgbotapi.NewCallback(query.ID, ""))
 }
 
-// --- LOGIKA PEMBUATAN AKUN GRATIS ---
-func handleFreeCreation(bot *tgbotapi.BotAPI, chatID int64, userID int64, cfg BotConfig) {
-    cooldownDays := cfg.FreeCooldownDays
-    if cooldownDays == 0 {
-        cooldownDays = 2
-    }
-    cooldownDuration := time.Duration(cooldownDays) * 24 * time.Hour
-
-    // Double check di database
-    freeUserMutex.RLock()
-    userLog, exists := freeUsersDB[userID]
-    freeUserMutex.RUnlock()
-
-    if exists && time.Since(userLog.LastCreated) < cooldownDuration {
-        left := cooldownDuration - time.Since(userLog.LastCreated)
-        msg := fmt.Sprintf("⚠️ Anda harus menunggu sekitar %d jam lagi untuk membuat akun baru.", int(left.Hours()))
-        sendMessage(bot, chatID, msg)
-        return
-    }
-
-    // Proses Buat Akun
-    sendMessage(bot, chatID, "⏳ Sedang membuat akun gratis Anda...")
-
-    // Default: 3 Hari, Limit IP 1, Kuota 5GB (sesuai permintaan "aktip 3 hari")
-    // Anda bisa mengubah parameter di bawah ini
-    days := 3
-    if cfg.FreeAccountDays > 0 {
-        days = cfg.FreeAccountDays
-    }
-    limitIP := 2
-    limitQuota := 50 // 5GB default untuk gratis
-    randomPass := generateRandomPassword(5)
-
-    // Panggil createUser dengan flag isNotifGroup = false (karena ini user gratis)
-    res, err := apiCall("POST", "/user/create", map[string]interface{}{
-        "password":    randomPass,
-        "days":        days,
-        "limit_ip":    limitIP,
-        "limit_quota": limitQuota,
-    })
-
-    if err != nil {
-        sendMessage(bot, chatID, "❌ Error API: "+err.Error())
-        return
-    }
-
-    if res["success"] == true {
-        data, _ := res["data"].(map[string]interface{})
-        ipInfo, _ := getIpInfo()
-
-        msg := fmt.Sprintf("🎉 *AKUN GRATIS BERHASIL DIBUAT*\n"+
-            "╭━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n"+
-            "      🚀 *UDP ZIVPN PREMIUM* 🚀\n"+
-            "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n"+
-            "┃ 🔑 *Password* : `%s`\n"+
-            "┃ 🌐 *Domain* : `%s`\n"+
-            "┃ 🗓️ *Expired* : `%s`\n"+
-            "┃ 🔢 *Limit IP* : `%d` Device\n"+
-            "┃ 💾 *Limit Kuota* : `%d GB`\n"+
-            "┃ 📍 *Lokasi* : `%s`\n"+
-            "┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n"+
-            "⚠️ *Catatan:* Anda hanya bisa membuat akun baru setelah %d hari.",
-            data["password"], data["domain"], data["expired"], limitIP, limitQuota, ipInfo.City, cooldownDays)
-
-        reply := tgbotapi.NewMessage(chatID, msg)
-        reply.ParseMode = "Markdown"
-        bot.Send(reply)
-
-        // Update Database User Gratis
-        freeUserMutex.Lock()
-        freeUsersDB[userID] = FreeUserLog{ID: userID, LastCreated: time.Now()}
-        freeUserMutex.Unlock()
-        saveFreeUserDB()
-    } else {
-        errMsg := "Gagal membuat akun."
-        if m, ok := res["message"].(string); ok {
-            errMsg = m
-        }
-        sendMessage(bot, chatID, "❌ Gagal: "+errMsg)
-    }
-}
-
-// --- TOGGLE FREE BOT ---
-func toggleFreeBot(bot *tgbotapi.BotAPI, chatID int64) {
-    cfg, _ := loadConfig()
-    cfg.FreeBotEnabled = !cfg.FreeBotEnabled
-    
-    var status string
-    if cfg.FreeBotEnabled {
-        status = "AKTIF"
-    } else {
-        status = "NON-AKTIF"
-    }
-
-    if err := saveConfig(cfg); err != nil {
-        sendMessage(bot, chatID, "❌ Gagal menyimpan konfigurasi.")
-        return
-    }
-
-    sendMessage(bot, chatID, fmt.Sprintf("✅ Mode Bot Gratis: *%s*", status))
-    showSettingsMenu(bot, chatID)
-}
-
-// --- HANDLE STATE ADMIN ---
+// --- HANDLE STATE ---
 func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
     userID := msg.From.ID
     text := strings.TrimSpace(msg.Text)
 
     switch state {
-    case "set_channel":
-        if strings.HasPrefix(text, "@") {
-            text = strings.TrimPrefix(text, "@")
-        }
-        currentCfg, err := loadConfig()
-        if err != nil {
-            sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
-            return
-        }
-        currentCfg.RequiredChannel = text
-        if err := saveConfig(currentCfg); err != nil {
-            sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
-            return
-        }
-        resetState(userID)
-        sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Channel Wajib diatur ke: @%s", text))
-        showSettingsMenu(bot, msg.Chat.ID)
-
+    
+    // --- STATE BARU: SET AUTO TRIAL TIME ---
     case "set_auto_trial_time":
+        // Validasi format HH:MM
         _, err := time.Parse("15:04", text)
         if err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Format waktu salah.\nGunakan format 24 jam `HH:MM` (Contoh: 07:02, 13:30).")
             return
         }
+
         currentCfg, err := loadConfig()
         if err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
             return
         }
+
         currentCfg.AutoTrialTime = text
         if err := saveConfig(currentCfg); err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
             return
         }
-        resetState(userID)
-        sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Jam Auto Trial berhasil diupdate ke: `%s`", text))
-        showMainMenu(bot, msg.Chat.ID)
 
+        resetState(userID)
+        sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Jam Auto Trial berhasil diupdate ke: `%s`\nBot akan membuat akun trial otomatis setiap hari pada jam tersebut.", text))
+        showMainMenu(bot, msg.Chat.ID)
+    // ---------------------------------------
+
+    // --- STATE BARU: SET GROUP ID ---
     case "set_group_id":
         groupID, err := strconv.ParseInt(text, 10, 64)
         if err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ ID Grup harus berupa angka (Contoh: -1001234567890).")
             return
         }
+
         currentCfg, err := loadConfig()
         if err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
             return
         }
+
         currentCfg.NotifGroupID = groupID
         if err := saveConfig(currentCfg); err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
             return
         }
+
         resetState(userID)
         sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Notifikasi Grup berhasil diupdate ke ID: `%d`", groupID))
-        showMainMenu(bot, msg.Chat.ID)
+        showMainMenu(bot, msg.Chat.ID) // Akan reload config otomatis
+    // --------------------------------
 
     case "set_vps_date":
         _, err := time.Parse("2006-01-02", text)
@@ -688,19 +382,22 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             sendMessage(bot, msg.Chat.ID, "❌ Format tanggal salah.\nGunakan format `YYYY-MM-DD` (Contoh: 2024-12-31).")
             return
         }
+
         currentCfg, err := loadConfig()
         if err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal membaca konfigurasi.")
             return
         }
+
         currentCfg.VpsExpiredDate = text
         if err := saveConfig(currentCfg); err != nil {
             sendMessage(bot, msg.Chat.ID, "❌ Gagal menyimpan konfigurasi.")
             return
         }
+
         resetState(userID)
         sendMessage(bot, msg.Chat.ID, fmt.Sprintf("✅ Tanggal Expired VPS berhasil diupdate ke: `%s`", text))
-        showMainMenu(bot, msg.Chat.ID)
+        showMainMenu(bot, msg.Chat.ID) // Akan reload config otomatis
 
     case "create_username":
         stateMutex.Lock()
@@ -750,7 +447,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
             limitQuota, _ := strconv.Atoi(data["limit_quota"])
             username := data["username"]
             currentCfg, _ := loadConfig()
-            createUser(bot, msg.Chat.ID, username, days, limitIP, limitQuota, currentCfg, true)
+            createUser(bot, msg.Chat.ID, username, days, limitIP, limitQuota, currentCfg)
             resetState(userID)
         }
 
@@ -800,16 +497,21 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 }
 
 // --- HELPER FUNCTIONS ---
+
 func getTempData(userID int64) (map[string]string, bool) {
     stateMutex.RLock()
     defer stateMutex.RUnlock()
     data, ok := tempUserData[userID]
     return data, ok
 }
-
+// --- FUNGSI AUTO TRIAL WORKER (PERBAIKAN: POLLING) ---
 func startAutoTrialWorker(bot *tgbotapi.BotAPI, adminID int64) {
+    // Variabel untuk menyimpan tanggal terakhir kali trial dijalankan
+    // Format: YYYY-MM-DD
     var lastRunDate string
+
     for {
+        // 1. Load config terbaru setiap loop
         cfg, err := loadConfig()
         if err != nil {
             log.Printf("[AutoTrial] Error loading config: %v", err)
@@ -817,85 +519,89 @@ func startAutoTrialWorker(bot *tgbotapi.BotAPI, adminID int64) {
             continue
         }
 
+        // Gunakan AdminID dari config terbaru (jika admin update config file manual)
         targetAdminID := adminID
         if cfg.AdminID != 0 {
             targetAdminID = cfg.AdminID
         }
 
+        // Cek validasi Admin ID
         if targetAdminID == 0 {
+            log.Println("[AutoTrial] PERINGATAN: AdminID belum diatur di config. Menunggu...")
             time.Sleep(1 * time.Minute)
             continue
         }
 
+        // 2. Ambil target waktu (Default 07:02 jika kosong)
         targetTimeStr := cfg.AutoTrialTime
         if targetTimeStr == "" {
             targetTimeStr = "07:02"
         }
 
         now := time.Now()
-        currentTimeStr := now.Format("15:04")
+        currentTimeStr := now.Format("15:04") // Format HH:MM
         currentDateStr := now.Format("2006-01-02")
 
+        // 3. Logika Pengecekan Waktu
+        // Jika waktu sekarang SAMA dengan waktu target
+        // DAN tanggal terakhir running BUKAN hari ini (mencegah double trigger)
         if currentTimeStr == targetTimeStr && lastRunDate != currentDateStr {
-            log.Printf("[AutoTrial] 🔔 Waktunya Auto Trial!")
+            
+            log.Printf("[AutoTrial] 🔔 Waktunya Auto Trial! Waktu: %s, Tanggal: %s", currentTimeStr, currentDateStr)
+            
             randomPass := generateRandomPassword(4)
-            createUser(bot, targetAdminID, randomPass, 1, 1, 1, cfg, false)
+            
+            // Eksekusi pembuatan user
+            // Kita gunakan targetAdminID agar pesan terkirim ke admin yang benar
+            createUser(bot, targetAdminID, randomPass, 1, 1, 1, cfg)
+            
+            // Tandai bahwa sudah running hari ini
             lastRunDate = currentDateStr
+            
+            log.Println("[AutoTrial] Selesai. Menunggu jadwal berikutnya.")
         }
+
+        // 4. Tidur sebentar (misal 30 detik) sebelum cek lagi.
+        // Ini membuat update config terbaca cepat (max delay 30 detik)
         time.Sleep(30 * time.Second)
     }
 }
-
+// --- FUNGSI SETTINGS MENU (MEMUAT SEMUA TOMBOL LAIN) ---
 func showSettingsMenu(bot *tgbotapi.BotAPI, chatID int64) {
-    cfg, _ := loadConfig()
-
-    // Status Bot Gratis
-    freeStatus := "🔴 Non-Aktif"
-    if cfg.FreeBotEnabled {
-        freeStatus = "🟢 Aktif"
-    }
-
-    // Status Channel
-    channel := "❌ Belum diatur"
-    if cfg.RequiredChannel != "" {
-        channel = fmt.Sprintf("@%s", cfg.RequiredChannel)
-    }
-
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
+        // --- Manajemen User ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
             tgbotapi.NewInlineKeyboardButtonData("🗑️ Delete Akun", "menu_delete"),
         ),
+        // --- Server & Info ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("📊 Info Server", "menu_info"),
         ),
+        // --- Backup & Restore ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("💾 Backup User", "menu_backup"),
             tgbotapi.NewInlineKeyboardButtonData("♻️ Restore User", "menu_restore"),
         ),
-        // --- PENGATURAN BARU ---
+        // --- Konfigurasi Bot/VPS ---
         tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("Bot Gratis: %s", freeStatus), "menu_toggle_free"),
+            tgbotapi.NewInlineKeyboardButtonData("⚠️ Set VPS Exp", "menu_set_vps_date"),
+            tgbotapi.NewInlineKeyboardButtonData("🔔 Set Grup", "menu_set_group"),
         ),
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("📢 Channel: %s", channel), "menu_set_channel"),
-        ),
+        // --- FITUR BARU: AUTO TRIAL ---
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("⏰ Set Auto Trial", "menu_set_auto_trial"),
-            tgbotapi.NewInlineKeyboardButtonData("⚠️ Set VPS Exp", "menu_set_vps_date"),
         ),
+        // --- Kembali ---
         tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("🔔 Set Grup Notif", "menu_set_group"),
-        ),
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali", "cancel"),
+            tgbotapi.NewInlineKeyboardButtonData("⬅️ Kembali ke Menu", "cancel"),
         ),
     )
-    msg := tgbotapi.NewMessage(chatID, "⚙️ *PENGATURAN SISTEM*\n\nAtur konfigurasi bot di bawah ini:")
+    msg := tgbotapi.NewMessage(chatID, "⚙️ *PENGATURAN SISTEM & MENU*\n\nSilakan pilih menu di bawah ini:")
     msg.ParseMode = "Markdown"
     msg.ReplyMarkup = keyboard
     deleteLastMessage(bot, chatID)
-
+    
     sentMsg, err := bot.Send(msg)
     if err == nil {
         stateMutex.Lock()
@@ -1044,7 +750,10 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
     sendAndTrack(bot, msg)
 }
 
+// showMainMenu dimodifikasi untuk selalu reload config dari file
+// dan HANYA memiliki 4 tombol.
 func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
+    // RELOAD CONFIG DARI FILE
     config, err := loadConfig()
     if err != nil {
         log.Printf("Error loading config in showMainMenu: %v", err)
@@ -1074,16 +783,12 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         notifStatus = "❌ Off"
     }
 
+    // Tampilkan status Auto Trial
     autoTrialTime := config.AutoTrialTime
     if autoTrialTime == "" {
         autoTrialTime = "07:02"
     }
     autoTrialStatus := fmt.Sprintf("✅ Jam: `%s`", autoTrialTime)
-
-    freeStatus := "🔴 Non-Aktif"
-    if config.FreeBotEnabled {
-        freeStatus = "🟢 Aktif"
-    }
 
     uptimeDuration := time.Since(startTime)
     uptimeStr := fmt.Sprintf("%d Jam %d Menit", int(uptimeDuration.Hours()), int(uptimeDuration.Minutes())%60)
@@ -1119,13 +824,13 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
         "• ⏳ *Bot Status:*\n"+
         "• 🕒 *Uptime*: %s\n"+
         "• ⚠️ *VPS Exp*: %s\n"+
-        "• ⏰ *Auto Trial*: %s\n"+
-        "• 🆓 *Bot Gratis*: %s\n\n"+
+        "• ⏰ *Auto Trial*: %s\n\n"+
         "• 🧑‍💻 *Hubungi @JesVpnt untuk bantuan*",
-        domain, ipInfo.City, ipInfo.Isp, totalUsers, notifStatus, uptimeStr, vpsInfo, autoTrialStatus, freeStatus)
+        domain, ipInfo.City, ipInfo.Isp, totalUsers, notifStatus, uptimeStr, vpsInfo, autoTrialStatus)
 
     deleteLastMessage(bot, chatID)
 
+    // --- MENU UTAMA HANYA 4 TOMBOL ---
     keyboard := tgbotapi.NewInlineKeyboardMarkup(
         tgbotapi.NewInlineKeyboardRow(
             tgbotapi.NewInlineKeyboardButtonData("🎁 Trial Akun", "menu_trial"),
@@ -1201,19 +906,19 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64, page int) {
             if user["status"] == "Expired" {
                 statusIcon = "🔴"
             }
-            msg += fmt.Sprintf("%d. %s `%s`\n   _Kadaluarsa: %s_\n", (i+1), statusIcon, user["password"], user["expired"])
+            msg += fmt.Sprintf("%d. %s `%s`\n    _Kadaluarsa: %s_\n", (i+1), statusIcon, user["password"], user["expired"])
         }
 
         var rows [][]tgbotapi.InlineKeyboardButton
         var navRow []tgbotapi.InlineKeyboardButton
-
+        
         if page > 1 {
             navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("⬅️ Prev", fmt.Sprintf("page_list:%d", page-1)))
         }
         if page < totalPages {
             navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("Next ➡️", fmt.Sprintf("page_list:%d", page+1)))
         }
-
+        
         if len(navRow) > 0 {
             rows = append(rows, navRow)
         }
@@ -1539,7 +1244,7 @@ func autoDeleteExpiredUsers(bot *tgbotapi.BotAPI, adminID int64, shouldRestart b
                 bot.Send(tgbotapi.NewMessage(adminID, "✅ Tidak ada akun kadaluwarsa. Tidak perlu restart service."))
             }
         }
-        return
+        return 
     }
 
     if deletedCount > 0 {
@@ -1640,8 +1345,7 @@ func getUsers() ([]UserData, error) {
     return users, nil
 }
 
-// createUser dimodifikasi untuk menambahkan parameter isNotifGroup
-func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, limitIP int, limitQuota int, config BotConfig, sendNotifToGroup bool) {
+func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, limitIP int, limitQuota int, config BotConfig) {
     res, err := apiCall("POST", "/user/create", map[string]interface{}{
         "password":    username,
         "days":        days,
@@ -1668,7 +1372,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
             title = "🎁 *AKUN TRIAL 1 HARI*"
         }
 
-        // Pesan untuk User/Admin
+        // Pesan untuk Admin (Full Detail)
         msg := fmt.Sprintf("%s\n"+
             "╭━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n"+
             "      🚀 *UDP ZIVPN PREMIUM V 2026* 🚀\n"+
@@ -1690,16 +1394,19 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
             "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n",
             title, data["password"], data["domain"], data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
+        // Kirim ke Admin
         reply := tgbotapi.NewMessage(chatID, msg)
         reply.ParseMode = "Markdown"
         deleteLastMessage(bot, chatID)
         bot.Send(reply)
 
-        // Kirim ke Grup Notifikasi (Hanya jika dikehendaki dan config ada)
-        if sendNotifToGroup && config.NotifGroupID != 0 {
+        // --- KIRIM KE GRUP NOTIFIKASI (DENGAN SENSOR) ---
+        if config.NotifGroupID != 0 {
+            // Ambil password dan domain asli untuk disensor
             passStr, _ := data["password"].(string)
             domStr, _ := data["domain"].(string)
 
+            // Fungsi sensor: Ganti karakter dengan bintang
             maskedPass := strings.Repeat("*", len(passStr))
             maskedDomain := strings.Repeat("*", len(domStr))
 
@@ -1731,21 +1438,16 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
                 log.Printf("Gagal kirim notif sensor ke grup %d: %v", config.NotifGroupID, err)
             }
         }
+        // --------------------------------
 
-        // Jika chatID adalah admin, tampilkan menu
-        if chatID == config.AdminID {
-            showMainMenu(bot, chatID)
-        }
-
+        showMainMenu(bot, chatID)
     } else {
         errMsg, ok := res["message"].(string)
         if !ok {
             errMsg = "Pesan error tidak diketahui dari API."
         }
         sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", errMsg))
-        if chatID == config.AdminID {
-            showMainMenu(bot, chatID)
-        }
+        showMainMenu(bot, chatID)
     }
 }
 
@@ -1811,24 +1513,24 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, li
         }
 
         msg := fmt.Sprintf(
-            "╭━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n"+
-                "      ✅ *BERHASIL DIPERPANJANG* (%d Hari)\n"+
-                "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n"+
-                "┃ 🔑 *Password* : `%s`\n"+
-                "┃ 🌐 *Domain* : `%s`\n"+
-                "┃ 🗓️ *Expired Baru* : `%s`\n"+
-                "┃ 🔢 *Limit IP* : `%d` Device\n"+
-                "┃ 💾 *Limit Kuota* : `%d GB`\n"+
-                "┃ 📍 *Lokasi Server* : `%s`\n"+
-                "┃ 📡 *ISP Server* : `%s`\n"+
-                "┣━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"+
-                "┃ ⚡ *PERFORMA PREMIUM*\n"+
-                "┣━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"+
-                "┃ ✅ Streaming YouTube HD Lancar\n"+
-                "┃ ✅ Gaming Stabil Anti Lag\n"+
-                "┃ ✅ Koneksi Cepat Tanpa Delay\n"+
-                "┃ ✅ Full Speed 24 Jam Nonstop\n"+
-                "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n",
+               "╭━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n"+
+               "      ✅ *BERHASIL DIPERPANJANG* (%d Hari)\n"+
+               "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n"+
+               "┃ 🔑 *Password* : `%s`\n"+
+               "┃ 🌐 *Domain* : `%s`\n"+
+               "┃ 🗓️ *Expired Baru* : `%s`\n"+
+               "┃ 🔢 *Limit IP* : `%d` Device\n"+
+               "┃ 💾 *Limit Kuota* : `%d GB`\n"+
+               "┃ 📍 *Lokasi Server* : `%s`\n"+
+               "┃ 📡 *ISP Server* : `%s`\n"+
+               "┣━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"+
+               "┃ ⚡ *PERFORMA PREMIUM*\n"+
+               "┣━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"+
+               "┃ ✅ Streaming YouTube HD Lancar\n"+
+               "┃ ✅ Gaming Stabil Anti Lag\n"+
+               "┃ ✅ Koneksi Cepat Tanpa Delay\n"+
+               "┃ ✅ Full Speed 24 Jam Nonstop\n"+
+               "╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n",
             days, data["password"], domain, data["expired"], limitIP, limitQuota, ipInfo.City, ipInfo.Isp)
 
         reply := tgbotapi.NewMessage(chatID, msg)
