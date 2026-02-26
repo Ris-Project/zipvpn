@@ -1,144 +1,213 @@
-# ZiVPN UDP Tunnel
-
-**ZiVPN UDP Tunnel** adalah solusi tunneling UDP premium dengan manajemen yang mudah, aman, dan otomatis. Dilengkapi dengan **API Server** dan **Telegram Bot** untuk pengelolaan user tanpa ribet.
-
----
-
-## 🌟 Fitur Utama
-
-*   **Minimalist CLI**: Installer dengan tampilan modern, bersih, dan elegan.
-*   **Headless Management**: Manajemen user sepenuhnya via API atau Bot (tanpa menu CLI jadul).
-*   **Telegram Bot Integration**: Kelola user (Create, Delete, Renew, List) langsung dari Telegram.
-*   **Dynamic Security**: API Key dan sertifikat SSL digenerate otomatis saat instalasi.
-*   **High Performance**: Menggunakan core UDP ZiVPN yang dioptimalkan untuk Linux AMD64.
-
----
-
-## 📥 Instalasi
-
-Jalankan perintah berikut di terminal VPS Anda (sebagai root):
-
-```bash
-apt update && apt install bzip2 -y && wget -q https://raw.githubusercontent.com/Ris-Project/zipvpn/main/install.sh && chmod +x install.sh && ./install.sh
-```
-### Konfigurasi Saat Instalasi
-Saat script berjalan, Anda akan diminta memasukkan:
-1.  **Domain**: Wajib diisi untuk generate sertifikat SSL (contoh: `vpn.domain.com`).
-2.  **API Key**:
-    *   Tekan **Enter** untuk menggunakan key acak yang aman (Recommended).
-    *   Atau ketik key manual jika diinginkan.
-3.  **Telegram Bot** (Opsional):
-    *   **Bot Token**: Token dari @BotFather.
-    *   **Admin ID**: ID Telegram Anda (cek di @userinfobot).
-    *   *Kosongkan jika tidak ingin mengaktifkan bot.*
-
----
-
-## 🤖 Telegram Bot Usage
-
-Jika Anda mengaktifkan bot, Anda bisa mengelola VPN langsung dari chat Telegram.
-
-*   **/start**: Menampilkan Menu Utama dengan tombol interaktif.
-*   **Create User**: Membuat user baru (Input Username -> Input Durasi).
-*   **Delete User**: Menghapus user (Input Username).
-*   **Renew User**: Memperpanjang masa aktif user.
-*   **List Users**: Melihat daftar user aktif dan expired.
-*   **System Info**: Cek IP, Domain, dan status service.
-
-> **Note**: Bot hanya merespon perintah dari **Admin ID** yang didaftarkan saat instalasi.
-
----
-
-## 🔌 API Documentation
-
-API berjalan di port `8080`. Gunakan **API Key** yang Anda atur saat instalasi pada header `X-API-Key`.
-
-**Base URL**: `http://<IP-VPS>:8080`
-**Header**: `X-API-Key: <YOUR-API-KEY>`
-
-### 1. Create User
-Membuat user baru.
-*   **Endpoint**: `/api/user/create`
-*   **Method**: `POST`
-*   **Body**:
-    ```json
-    { "password": "user123", "days": 30 }
-    ```
-*   **Response**:
-    ```json
-    {
-        "success": true,
-        "message": "User berhasil dibuat",
-        "data": {
-            "password": "user123",
-            "expired": "2024-12-31",
-            "domain": "vpn.domain.com"
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Riswan Jabar Store - Logo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Plus+Jakarta+Sans:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f0f0f;
+            --fg: #fafafa;
+            --accent: #d4a932;
         }
-    }
-    ```
 
-### 2. Delete User
-Menghapus user.
-*   **Endpoint**: `/api/user/delete`
-*   **Method**: `POST`
-*   **Body**:
-    ```json
-    { "password": "user123" }
-    ```
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
 
-### 3. Renew User
-Memperpanjang durasi user.
-*   **Endpoint**: `/api/user/renew`
-*   **Method**: `POST`
-*   **Body**:
-    ```json
-    { "password": "user123", "days": 30 }
-    ```
+        .font-display {
+            font-family: 'Bebas Neue', sans-serif;
+        }
 
-### 4. List Users
-Melihat semua user.
-*   **Endpoint**: `/api/users`
-*   **Method**: `GET`
+        /* Logo */
+        .logo-container {
+            text-align: center;
+        }
 
-### 5. System Info
-Melihat informasi server.
-*   **Endpoint**: `/api/info`
-*   **Method**: `GET`
+        .logo-icon {
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 1.5rem;
+        }
 
----
+        .logo-icon svg {
+            filter: drop-shadow(0 0 30px rgba(212, 169, 50, 0.3));
+        }
 
-## 🛠️ Pemecahan Masalah (Troubleshooting)
+        .ring-outer {
+            fill: none;
+            stroke: var(--accent);
+            stroke-width: 2;
+            stroke-dasharray: 345;
+            stroke-dashoffset: 345;
+            animation: draw 1.5s ease-out forwards;
+        }
 
-### 1. Log "TCP error" di Jurnal
-Jika Anda melihat log seperti:
-`ERROR TCP error {"addr": "140.213.xx.xx:..."}`
+        .ring-inner {
+            fill: none;
+            stroke: var(--accent);
+            stroke-width: 1;
+            opacity: 0.5;
+            stroke-dasharray: 260;
+            stroke-dashoffset: 260;
+            animation: draw 1.5s ease-out 0.2s forwards;
+        }
 
-*   **Penyebab**: Koneksi client tidak stabil (sering terjadi pada jaringan seluler/Indosat) atau masalah MTU.
-*   **Solusi**:
-    *   Ini biasanya **bukan error server**. Jika user masih bisa connect, abaikan saja.
-    *   Jika user sering disconnect, sarankan user menurunkan **MTU** di aplikasi client mereka (coba `1100` atau `1200`).
+        .letter-r {
+            fill: var(--accent);
+            opacity: 0;
+            animation: fade 0.6s ease-out 0.8s forwards;
+        }
 
-### 2. Bot Telegram Tidak Merespon
-*   Pastikan service berjalan: `systemctl status zivpn-bot`
-*   Cek log error: `journalctl -u zivpn-bot -f`
-*   Pastikan **Bot Token** dan **Admin ID** benar di `/etc/zivpn/bot-config.json`.
-*   Restart bot: `systemctl restart zivpn-bot`
+        .brand-name {
+            font-size: clamp(2.5rem, 10vw, 4rem);
+            letter-spacing: 0.2em;
+            color: var(--fg);
+            opacity: 0;
+            animation: fade 0.6s ease-out 1s forwards;
+        }
 
-### 3. API Error "Unauthorized"
-*   Pastikan Anda menggunakan **API Key** yang benar di header `X-API-Key`.
-*   Cek key yang aktif di server: `cat /etc/zivpn/apikey`
+        .brand-sub {
+            font-size: clamp(0.75rem, 2vw, 1rem);
+            letter-spacing: 0.4em;
+            color: var(--accent);
+            opacity: 0;
+            animation: fade 0.6s ease-out 1.2s forwards;
+        }
 
-### 4. Service Gagal Start
-*   Cek status: `systemctl status zivpn`
-*   Pastikan port `5667` (UDP) dan `8080` (TCP) tidak terpakai aplikasi lain.
-*   Cek config: `cat /etc/zivpn/config.json`
+        .divider {
+            width: 50px;
+            height: 1px;
+            background: var(--accent);
+            margin: 1rem auto;
+            opacity: 0;
+            animation: fade 0.6s ease-out 1.1s forwards;
+        }
 
----
+        @keyframes draw {
+            to { stroke-dashoffset: 0; }
+        }
 
-## 🗑️ Uninstall
+        @keyframes fade {
+            to { opacity: 1; }
+        }
 
-Untuk menghapus ZiVPN, API, Bot, dan semua konfigurasi:
+        /* Variations */
+        .variations {
+            display: flex;
+            gap: 2rem;
+            margin-top: 4rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
 
-```bash
-wget -q https://raw.githubusercontent.com/Ris-Project/zipvpn/main/uninstall.sh && chmod +x uninstall.sh && ./uninstall.sh
-```
+        .var-card {
+            padding: 2rem 3rem;
+            border-radius: 8px;
+            text-align: center;
+            opacity: 0;
+            animation: fade 0.6s ease-out 1.4s forwards;
+        }
+
+        .var-dark {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+        }
+
+        .var-light {
+            background: #fafafa;
+        }
+
+        .var-card svg {
+            width: 50px;
+            height: 50px;
+            margin-bottom: 0.75rem;
+        }
+
+        .var-card .name {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.25rem;
+            letter-spacing: 0.1em;
+        }
+
+        .var-dark .name { color: var(--fg); }
+        .var-light .name { color: #1a1a1a; }
+
+        .var-card .sub {
+            font-size: 0.65rem;
+            letter-spacing: 0.2em;
+            opacity: 0.6;
+        }
+
+        .var-dark .sub { color: var(--fg); }
+        .var-light .sub { color: #1a1a1a; }
+
+        .label {
+            font-size: 0.7rem;
+            letter-spacing: 0.15em;
+            color: #555;
+            margin-top: 0.75rem;
+            text-transform: uppercase;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="logo-container">
+        <!-- Logo Icon -->
+        <div class="logo-icon">
+            <svg viewBox="0 0 100 100">
+                <circle class="ring-outer" cx="50" cy="50" r="45"/>
+                <circle class="ring-inner" cx="50" cy="50" r="35"/>
+                <path class="letter-r" d="M38 68V32h15c7 0 12 4 12 11 0 4-2 7-6 9l8 16h-7l-7-13h-8v13h-7zm7-18h8c3 0 5-2 5-5s-2-5-5-5h-8v10z"/>
+            </svg>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Text -->
+        <h1 class="brand-name font-display">RISWAN</h1>
+        <p class="brand-sub">JABAR STORE</p>
+    </div>
+
+    <!-- Variations -->
+    <div class="variations">
+        <div class="var-card var-dark">
+            <svg viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="45" fill="none" stroke="#d4a932" stroke-width="2"/>
+                <path d="M38 68V32h15c7 0 12 4 12 11 0 4-2 7-6 9l8 16h-7l-7-13h-8v13h-7zm7-18h8c3 0 5-2 5-5s-2-5-5-5h-8v10z" fill="#d4a932"/>
+            </svg>
+            <p class="name">RISWAN</p>
+            <p class="sub">JABAR STORE</p>
+            <p class="label">Dark</p>
+        </div>
+
+        <div class="var-card var-light">
+            <svg viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="45" fill="none" stroke="#1a1a1a" stroke-width="2"/>
+                <path d="M38 68V32h15c7 0 12 4 12 11 0 4-2 7-6 9l8 16h-7l-7-13h-8v13h-7zm7-18h8c3 0 5-2 5-5s-2-5-5-5h-8v10z" fill="#1a1a1a"/>
+            </svg>
+            <p class="name">RISWAN</p>
+            <p class="sub">JABAR STORE</p>
+            <p class="label">Light</p>
+        </div>
+    </div>
+
+</body>
+</html>
